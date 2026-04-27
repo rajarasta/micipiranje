@@ -301,3 +301,76 @@ def test_read_column_unique_keeps_first_order(sandbox):
     # First line is the header "x", rest are values.
     values = lines[1:]
     assert values == ["b", "a", "c"]
+
+
+def test_search_exact_substring(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_search("small.xlsx", query="vijak", mode="exact")
+    assert "mode=exact" in out
+    assert "Vijak M8x40 inox" in out
+    assert "Vijak M10x60 cink" in out
+    assert "Matica M8 inox" not in out
+
+
+def test_search_exact_case_insensitive(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_search("small.xlsx", query="VIJAK", mode="exact")
+    assert "Vijak M8x40 inox" in out
+
+
+def test_search_fuzzy_finds_reordered_words(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    # Reordered, with synonym/typo style — fuzzy should still hit "Vijak M8x40 inox"
+    out = xlsx_server.xlsx_search(
+        "small.xlsx", query="M8 inox vijak 40", mode="fuzzy"
+    )
+    assert "mode=fuzzy" in out
+    assert "Vijak M8x40 inox" in out
+    # score column present
+    lines = [l for l in out.split("\n") if not l.startswith("#")]
+    header = lines[0].split("\t")
+    assert "score" in header
+
+
+def test_search_fuzzy_below_threshold_returns_empty(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_search(
+        "small.xlsx", query="quantum entanglement reactor", mode="fuzzy"
+    )
+    assert "0 of 0 matches" in out or "no matches" in out
+
+
+def test_search_empty_query(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="query cannot be empty"):
+        xlsx_server.xlsx_search("small.xlsx", query="")
+
+
+def test_search_specific_columns(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    # "kom" appears in jmj for every row — but if we only search "naziv",
+    # we should match nothing.
+    out = xlsx_server.xlsx_search(
+        "small.xlsx", query="kom", mode="exact", columns=["naziv"]
+    )
+    assert "0 of 0 matches" in out or "no matches" in out
+
+
+def test_search_unknown_column(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="column 'nope' not found"):
+        xlsx_server.xlsx_search("small.xlsx", query="x", columns=["nope"])

@@ -44,8 +44,10 @@ def _safe(path: str) -> Path:
 
 
 import pandas as pd
+from rapidfuzz import fuzz
 
 _CSV_ENCODINGS = ["utf-8", "cp1250", "latin-1"]
+_FUZZY_THRESHOLD = 60
 
 
 def _load_table(path: str, sheet: str | None) -> tuple[pd.DataFrame, dict]:
@@ -240,6 +242,80 @@ def xlsx_read_column(
     if clamped < count:
         header.append(f"# count clamped to {clamped} (cap={_COLUMN_CAP})")
     return _to_tsv(sliced, header_lines=header)
+
+
+def _string_columns(df: pd.DataFrame) -> list[str]:
+    return [
+        c
+        for c in df.columns
+        if df[c].dtype == "object"
+        or pd.api.types.is_string_dtype(df[c])
+    ]
+
+
+def _join_row(row: pd.Series, cols: list[str]) -> str:
+    return " ".join("" if pd.isna(row[c]) else str(row[c]) for c in cols)
+
+
+@mcp.tool()
+def xlsx_search(
+    path: str,
+    query: str,
+    columns: list[str] | None = None,
+    mode: str = "fuzzy",
+    limit: int = 20,
+    sheet: str | None = None,
+) -> str:
+    """Search rows. mode='exact' is case-insensitive substring; mode='fuzzy' uses
+    rapidfuzz.token_set_ratio with score >= 60. columns=None searches all
+    string columns. Returns top `limit` rows sorted by score desc, with a `score`
+    column appended in fuzzy mode."""
+    if not query:
+        raise ValueError("query cannot be empty")
+    if mode not in ("exact", "fuzzy"):
+        raise ValueError(f"mode must be 'exact' or 'fuzzy', got {mode!r}")
+    df, meta = _load_table(path, sheet)
+    if columns is None:
+        cols = _string_columns(df)
+    else:
+        for c in columns:
+            if c not in df.columns:
+                raise ValueError(f"column {c!r} not found, available: {list(df.columns)}")
+        cols = columns
+    if not cols:
+        return f"# search {query!r}, mode={mode}: no string columns to search"
+
+    joined = df.apply(lambda r: _join_row(r, cols), axis=1)
+
+    if mode == "exact":
+        q = query.casefold()
+        mask = joined.str.casefold().str.contains(q, regex=False, na=False)
+        result = df[mask].head(limit)
+        total = int(mask.sum())
+        header = [
+            f"# search {query!r}, mode=exact, columns={cols}, "
+            f"showing {len(result)} of {total} matches"
+        ]
+        if total == 0:
+            header.append("# no matches")
+            return "\n".join(header)
+        return _to_tsv(result, header_lines=header)
+
+    # fuzzy
+    scores = joined.map(lambda s: fuzz.token_set_ratio(query, s))
+    matched_idx = scores[scores >= _FUZZY_THRESHOLD].sort_values(ascending=False).index
+    total = len(matched_idx)
+    top = matched_idx[:limit]
+    result = df.loc[top].copy()
+    result.insert(0, "score", scores.loc[top].astype(int).values)
+    header = [
+        f"# search {query!r}, mode=fuzzy, columns={cols}, threshold={_FUZZY_THRESHOLD}, "
+        f"showing {len(result)} of {total} matches"
+    ]
+    if total == 0:
+        header.append("# no matches")
+        return "\n".join(header)
+    return _to_tsv(result, header_lines=header)
 
 
 if __name__ == "__main__":
