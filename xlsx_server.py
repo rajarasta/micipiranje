@@ -116,6 +116,48 @@ def _to_tsv(df: pd.DataFrame, header_lines: list[str], max_chars: int = 50000) -
     return "\n".join(lines)
 
 
+def _col_types(df: pd.DataFrame) -> list[str]:
+    """Render column descriptors like `name:int`, `name:string`."""
+    out = []
+    for c in df.columns:
+        dt = df[c].dtype
+        if pd.api.types.is_integer_dtype(dt):
+            t = "int"
+        elif pd.api.types.is_float_dtype(dt):
+            t = "float"
+        elif pd.api.types.is_bool_dtype(dt):
+            t = "bool"
+        elif pd.api.types.is_datetime64_any_dtype(dt):
+            t = "datetime"
+        else:
+            t = "string"
+        out.append(f"{c}:{t}")
+    return out
+
+
+@mcp.tool()
+def xlsx_overview(path: str, sheet: str | None = None) -> str:
+    """Quick overview of a table: type, sheets, dimensions, columns with types,
+    first 5 rows and last 5 rows. Use this first on any unknown file."""
+    df, meta = _load_table(path, sheet)
+    rows, cols = df.shape
+    header = [
+        f"# file={path}",
+        f"# type={meta['type']}",
+    ]
+    if meta["sheets"] is not None:
+        header.append(f"# sheets={meta['sheets']}")
+        header.append(f"# active_sheet={meta['active_sheet']}")
+    if meta["encoding"] is not None:
+        header.append(f"# encoding={meta['encoding']}")
+    header.append(f"# rows={rows} cols={cols}")
+    header.append(f"# columns: {', '.join(_col_types(df))}")
+
+    head_block = _to_tsv(df.head(5), header_lines=["# first 5 rows"])
+    tail_block = _to_tsv(df.tail(5), header_lines=["# last 5 rows"])
+    return "\n".join(header) + "\n\n" + head_block + "\n\n" + tail_block
+
+
 if __name__ == "__main__":
     # Eagerly verify the env var at startup when running as a server.
     _root()

@@ -165,3 +165,43 @@ def test_tsv_datetime_renders_via_str():
     lines = out.split("\n")
     # str(Timestamp) gives "2024-01-15 00:00:00"; NaT is NaN-like → empty.
     assert lines == ["d", "2024-01-15 00:00:00", ""]
+
+
+def test_overview_xlsx(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_overview("small.xlsx")
+    assert "small.xlsx" in out
+    assert "type=xlsx" in out
+    assert "sheets=['Glavni', 'Sazetak']" in out
+    assert "active_sheet=Glavni" in out
+    assert "rows=3" in out
+    assert "cols=4" in out
+    # Column listing with types
+    assert "sifra" in out and "naziv" in out
+    # First-rows section header
+    assert "# first 5 rows" in out
+    assert "# last 5 rows" in out
+    # Actual values from the fixture
+    assert "Vijak M8x40 inox" in out
+
+
+def test_overview_csv(small_csv_utf8):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_overview("small_utf8.csv")
+    assert "type=csv" in out
+    assert "encoding=utf-8" in out
+    assert "rows=3" in out
+    assert "cols=2" in out
+
+
+def test_overview_named_sheet(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_overview("small.xlsx", sheet="Sazetak")
+    assert "active_sheet=Sazetak" in out
+    assert "kategorija" in out
