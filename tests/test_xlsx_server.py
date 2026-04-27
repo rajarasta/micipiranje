@@ -374,3 +374,58 @@ def test_search_unknown_column(small_xlsx):
     importlib.reload(xlsx_server)
     with pytest.raises(ValueError, match="column 'nope' not found"):
         xlsx_server.xlsx_search("small.xlsx", query="x", columns=["nope"])
+
+
+def test_match_list_basic(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_match_list(
+        "small.xlsx",
+        candidates=["M8 vijak nehrdajuci 40mm", "matica M8 inox"],
+        column="naziv",
+        limit_per_candidate=2,
+    )
+    # Per-candidate group headers
+    assert '## "M8 vijak nehrdajuci 40mm"' in out
+    assert '## "matica M8 inox"' in out
+    # Best matches are present somewhere in the output
+    assert "Vijak M8x40 inox" in out
+    assert "Matica M8 inox" in out
+    # `score` column appears under both groups
+    assert out.count("score\t") >= 2
+
+
+def test_match_list_no_threshold_returns_top_n(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_match_list(
+        "small.xlsx",
+        candidates=["totalni nonsens xyz"],
+        column="naziv",
+        limit_per_candidate=3,
+    )
+    # Even with junk query, we still get top N — LLM judges by score
+    assert '## "totalni nonsens xyz"' in out
+    # Three result rows under the header
+    block = out.split('## "totalni nonsens xyz"', 1)[1]
+    data_lines = [l for l in block.split("\n") if l and not l.startswith("#") and not l.startswith("##")]
+    # First is the column header line, then up to 3 results
+    assert len(data_lines) >= 2  # header + at least 1 result
+
+
+def test_match_list_empty_candidates(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="candidates cannot be empty"):
+        xlsx_server.xlsx_match_list("small.xlsx", candidates=[], column="naziv")
+
+
+def test_match_list_unknown_column(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="column 'nope' not found"):
+        xlsx_server.xlsx_match_list("small.xlsx", candidates=["x"], column="nope")

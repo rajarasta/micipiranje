@@ -44,7 +44,7 @@ def _safe(path: str) -> Path:
 
 
 import pandas as pd
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 _CSV_ENCODINGS = ["utf-8", "cp1250", "latin-1"]
 _FUZZY_THRESHOLD = 60
@@ -316,6 +316,52 @@ def xlsx_search(
         header.append("# no matches")
         return "\n".join(header)
     return _to_tsv(result, header_lines=header)
+
+
+@mcp.tool()
+def xlsx_match_list(
+    path: str,
+    candidates: list[str],
+    column: str,
+    limit_per_candidate: int = 5,
+    sheet: str | None = None,
+) -> str:
+    """For each string in `candidates`, return the top N most-similar rows from
+    `column` by rapidfuzz.token_set_ratio. No threshold — top N always returned
+    so the LLM can judge from scores. Output is grouped per candidate."""
+    if not candidates:
+        raise ValueError("candidates cannot be empty")
+    if limit_per_candidate <= 0:
+        raise ValueError("limit_per_candidate must be > 0")
+    df, meta = _load_table(path, sheet)
+    if column not in df.columns:
+        raise ValueError(f"column {column!r} not found, available: {list(df.columns)}")
+
+    choices = df[column].astype(str).tolist()
+
+    blocks: list[str] = [
+        f"# matched {len(candidates)} candidates against column {column!r}, "
+        f"top {limit_per_candidate} each"
+    ]
+    if meta["active_sheet"]:
+        blocks.append(f"# sheet={meta['active_sheet']}")
+    blocks.append("")
+
+    for cand in candidates:
+        matches = process.extract(
+            cand, choices, scorer=fuzz.token_set_ratio, limit=limit_per_candidate
+        )
+        # matches: list of (matched_string, score, index)
+        idx = [m[2] for m in matches]
+        scores = [int(m[1]) for m in matches]
+        rows = df.iloc[idx].copy()
+        rows.insert(0, "score", scores)
+        # Already sorted by rapidfuzz, but make ordering explicit for stability
+        rows = rows.sort_values("score", ascending=False)
+        blocks.append(f'## "{cand}"')
+        blocks.append(_to_tsv(rows, header_lines=[]))
+        blocks.append("")
+    return "\n".join(blocks).rstrip()
 
 
 if __name__ == "__main__":
