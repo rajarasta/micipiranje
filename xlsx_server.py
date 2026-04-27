@@ -83,6 +83,39 @@ def _load_table(path: str, sheet: str | None) -> tuple[pd.DataFrame, dict]:
     raise ValueError(f"unsupported file type {ext!r}, expected .xlsx/.xls/.csv")
 
 
+def _to_tsv(df: pd.DataFrame, header_lines: list[str], max_chars: int = 50000) -> str:
+    """Render a DataFrame as TSV with optional `# ...` metadata lines on top.
+
+    NaN/None → empty string. Cells with tab/newline/carriage-return are escaped.
+    Rows are truncated at the row boundary if the total would exceed max_chars,
+    and a `# truncated, N more rows omitted` line is appended.
+    """
+    def fmt(v):
+        if pd.isna(v):
+            return ""
+        s = str(v)
+        return s.replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+
+    lines = list(header_lines)
+    lines.append("\t".join(str(c) for c in df.columns))
+    char_count = sum(len(l) + 1 for l in lines)
+
+    truncated = 0
+    for i, row in enumerate(df.itertuples(index=False, name=None)):
+        line = "\t".join(fmt(v) for v in row)
+        if char_count + len(line) + 1 > max_chars:
+            truncated = len(df) - i
+            break
+        lines.append(line)
+        char_count += len(line) + 1
+
+    if truncated:
+        lines.append(
+            f"# truncated, {truncated} more rows omitted — narrow your query or paginate"
+        )
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     # Eagerly verify the env var at startup when running as a server.
     _root()

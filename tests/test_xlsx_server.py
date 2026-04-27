@@ -110,3 +110,58 @@ def test_load_missing_file(sandbox):
     importlib.reload(xlsx_server)
     with pytest.raises(FileNotFoundError):
         xlsx_server._load_table("missing.xlsx", sheet=None)
+
+
+import pandas as pd
+
+
+def test_tsv_basic_format():
+    import xlsx_server
+    df = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    out = xlsx_server._to_tsv(df, header_lines=["# meta"])
+    assert out == "# meta\na\tb\n1\tx\n2\ty"
+
+
+def test_tsv_nan_to_empty():
+    import xlsx_server
+    df = pd.DataFrame({"a": [1, None], "b": ["x", None]})
+    out = xlsx_server._to_tsv(df, header_lines=[])
+    lines = out.split("\n")
+    assert lines == ["a\tb", "1.0\tx", "\t"]
+
+
+def test_tsv_escapes_tab_and_newline():
+    import xlsx_server
+    df = pd.DataFrame({"a": ["with\ttab", "with\nnewline"]})
+    out = xlsx_server._to_tsv(df, header_lines=[])
+    lines = out.split("\n")
+    assert lines == ["a", "with\\ttab", "with\\nnewline"]
+
+
+def test_tsv_truncates_at_row_boundary():
+    import xlsx_server
+    df = pd.DataFrame({"a": [f"row{i}" for i in range(100)]})
+    out = xlsx_server._to_tsv(df, header_lines=["# big"], max_chars=40)
+    lines = out.split("\n")
+    # Last line must be the truncation notice; no partial rows.
+    assert lines[-1].startswith("# truncated,")
+    assert "more rows omitted" in lines[-1]
+    # Every data line is one full "rowN" cell.
+    data = [l for l in lines if l.startswith("row")]
+    assert all(l == f"row{i}" for i, l in enumerate(data))
+
+
+def test_tsv_no_truncation_when_under_cap():
+    import xlsx_server
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    out = xlsx_server._to_tsv(df, header_lines=[], max_chars=50000)
+    assert "truncated" not in out
+
+
+def test_tsv_datetime_renders_via_str():
+    import xlsx_server
+    df = pd.DataFrame({"d": [pd.Timestamp("2024-01-15"), pd.NaT]})
+    out = xlsx_server._to_tsv(df, header_lines=[])
+    lines = out.split("\n")
+    # str(Timestamp) gives "2024-01-15 00:00:00"; NaT is NaN-like → empty.
+    assert lines == ["d", "2024-01-15 00:00:00", ""]
