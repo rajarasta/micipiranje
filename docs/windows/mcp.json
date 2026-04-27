@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "lm-fs": {
+      "command": "C:/Users/RAJA/.local/bin/uv.exe",
+      "args": [
+        "run",
+        "--script",
+        "C:/LMStudio/server.py"
+      ],
+      "env": {
+        "LM_MCP_ROOT": "C:/LMStudio/lm-studio-sandbox"
+      }
+    },
+    "lm-web": {
+      "command": "C:/Users/RAJA/.local/bin/uv.exe",
+      "args": [
+        "run",
+        "--script",
+        "C:/LMStudio/web_server.py"
+      ],
+      "env": {
+        "LM_WEB_BACKEND": "auto",
+        "LM_MCP_ROOT": "C:/LMStudio/lm-studio-sandbox"
+      }
+    },
+    "lm-xlsx": {
+      "command": "C:/Users/RAJA/.local/bin/uv.exe",
+      "args": [
+        "run",
+        "--script",
+        "C:/LMStudio/xlsx_server.py"
+      ],
+      "env": {
+        "LM_MCP_ROOT": "C:/LMStudio/lm-studio-sandbox"
+      }
+    }
+  }
+}
