@@ -55,6 +55,7 @@ def test_load_xlsx_default_sheet(small_xlsx):
     assert meta["type"] == "xlsx"
     assert meta["sheets"] == ["Glavni", "Sazetak"]
     assert meta["active_sheet"] == "Glavni"
+    assert meta["encoding"] is None
 
 
 def test_load_xlsx_named_sheet(small_xlsx):
