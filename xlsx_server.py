@@ -158,6 +158,34 @@ def xlsx_overview(path: str, sheet: str | None = None) -> str:
     return "\n".join(header) + "\n\n" + head_block + "\n\n" + tail_block
 
 
+_ROWS_CAP = 1000
+
+
+@mcp.tool()
+def xlsx_read_rows(path: str, start: int, count: int = 50, sheet: str | None = None) -> str:
+    """Read a slice of rows [start, start+count). start is 0-based (row 0 = first
+    data row after the header). count default 50, hard cap 1000."""
+    if count <= 0:
+        raise ValueError("count must be > 0")
+    df, meta = _load_table(path, sheet)
+    total = len(df)
+    header = []
+    if start >= total:
+        header.append(f"# start {start} >= total {total}, nothing to show")
+        if meta["active_sheet"]:
+            header.append(f"# sheet={meta['active_sheet']}")
+        return "\n".join(header)
+    clamped = min(count, _ROWS_CAP)
+    end = min(start + clamped, total)
+    sliced = df.iloc[start:end]
+    note = []
+    sheet_part = f', sheet "{meta["active_sheet"]}"' if meta["active_sheet"] else ""
+    note.append(f"# rows {start}–{end - 1} of {total}{sheet_part}")
+    if clamped < count:
+        note.append(f"# count clamped to {clamped} (cap={_ROWS_CAP})")
+    return _to_tsv(sliced, header_lines=note)
+
+
 if __name__ == "__main__":
     # Eagerly verify the env var at startup when running as a server.
     _root()

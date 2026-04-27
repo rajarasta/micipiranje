@@ -205,3 +205,50 @@ def test_overview_named_sheet(small_xlsx):
     out = xlsx_server.xlsx_overview("small.xlsx", sheet="Sazetak")
     assert "active_sheet=Sazetak" in out
     assert "kategorija" in out
+
+
+def test_read_rows_basic(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_rows("small.xlsx", start=0, count=2)
+    assert "rows 0–1 of 3" in out
+    assert "Vijak M8x40 inox" in out
+    assert "Matica M8 inox" in out
+    assert "Vijak M10x60 cink" not in out  # past count
+
+
+def test_read_rows_offset(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_rows("small.xlsx", start=2, count=10)
+    assert "rows 2–2 of 3" in out
+    assert "Vijak M10x60 cink" in out
+    assert "Vijak M8x40 inox" not in out
+
+
+def test_read_rows_start_past_end(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_rows("small.xlsx", start=99, count=10)
+    assert "start 99 >= total 3" in out
+
+
+def test_read_rows_invalid_count(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="count must be > 0"):
+        xlsx_server.xlsx_read_rows("small.xlsx", start=0, count=0)
+
+
+def test_read_rows_hard_cap(large_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_rows("large.xlsx", start=0, count=5000)
+    # Hard cap is 1000, so the header should announce the clamped range.
+    assert "rows 0–999 of 10000" in out
+    assert "count clamped to 1000" in out
