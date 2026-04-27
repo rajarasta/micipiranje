@@ -252,3 +252,52 @@ def test_read_rows_hard_cap(large_xlsx):
     # Hard cap is 1000, so the header should announce the clamped range.
     assert "rows 0–999 of 10000" in out
     assert "count clamped to 1000" in out
+
+
+def test_read_column_by_name(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_column("small.xlsx", column="naziv")
+    assert "column=naziv" in out
+    assert "Vijak M8x40 inox" in out
+    assert "Matica M8 inox" in out
+
+
+def test_read_column_by_index(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    out = xlsx_server.xlsx_read_column("small.xlsx", column=1)  # naziv
+    assert "column=naziv" in out
+    assert "Vijak M8x40 inox" in out
+
+
+def test_read_column_unknown_name(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="column 'nope' not found"):
+        xlsx_server.xlsx_read_column("small.xlsx", column="nope")
+
+
+def test_read_column_index_out_of_range(small_xlsx):
+    import importlib
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    with pytest.raises(ValueError, match="column index 99 out of range"):
+        xlsx_server.xlsx_read_column("small.xlsx", column=99)
+
+
+def test_read_column_unique_keeps_first_order(sandbox):
+    import importlib
+    import pandas as pd
+    import xlsx_server
+    importlib.reload(xlsx_server)
+    p = sandbox / "dups.xlsx"
+    pd.DataFrame({"x": ["b", "a", "b", "c", "a"]}).to_excel(p, index=False, engine="openpyxl")
+    out = xlsx_server.xlsx_read_column("dups.xlsx", column="x", unique=True)
+    lines = [l for l in out.split("\n") if l and not l.startswith("#")]
+    # First line is the header "x", rest are values.
+    values = lines[1:]
+    assert values == ["b", "a", "c"]

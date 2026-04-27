@@ -186,6 +186,62 @@ def xlsx_read_rows(path: str, start: int, count: int = 50, sheet: str | None = N
     return _to_tsv(sliced, header_lines=note)
 
 
+_COLUMN_CAP = 2000
+
+
+def _resolve_column(df: pd.DataFrame, column) -> str:
+    if isinstance(column, int):
+        if column < 0 or column >= len(df.columns):
+            raise ValueError(
+                f"column index {column} out of range, valid: 0..{len(df.columns) - 1}"
+            )
+        return df.columns[column]
+    if column not in df.columns:
+        raise ValueError(f"column {column!r} not found, available: {list(df.columns)}")
+    return column
+
+
+@mcp.tool()
+def xlsx_read_column(
+    path: str,
+    column,
+    start: int = 0,
+    count: int = 200,
+    sheet: str | None = None,
+    unique: bool = False,
+) -> str:
+    """Read values of a single column with pagination. `column` is a name or
+    0-based index. With unique=True, returns distinct values preserving first-seen
+    order. count default 200, hard cap 2000."""
+    if count <= 0:
+        raise ValueError("count must be > 0")
+    df, meta = _load_table(path, sheet)
+    col = _resolve_column(df, column)
+    series = df[col]
+    if unique:
+        # drop_duplicates preserves order of first occurrence
+        series = series.drop_duplicates()
+    total = len(series)
+    header = [f"# column={col}"]
+    if meta["active_sheet"]:
+        header.append(f"# sheet={meta['active_sheet']}")
+    if unique:
+        header.append("# unique=True")
+    if total == 0:
+        header.append("# column is empty")
+        return "\n".join(header)
+    if start >= total:
+        header.append(f"# start {start} >= total {total}, nothing to show")
+        return "\n".join(header)
+    clamped = min(count, _COLUMN_CAP)
+    end = min(start + clamped, total)
+    sliced = series.iloc[start:end].to_frame()
+    header.append(f"# values {start}–{end - 1} of {total}")
+    if clamped < count:
+        header.append(f"# count clamped to {clamped} (cap={_COLUMN_CAP})")
+    return _to_tsv(sliced, header_lines=header)
+
+
 if __name__ == "__main__":
     # Eagerly verify the env var at startup when running as a server.
     _root()
