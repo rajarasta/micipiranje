@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
+
+import fitz  # PyMuPDF
 
 from mcp.server.fastmcp import FastMCP
 
@@ -145,6 +148,33 @@ def _to_tsv(rows: list[list], header_lines: list[str], max_chars: int = 50000) -
                 f"# truncated, {truncated} more rows omitted — narrow your query or paginate"
             )
     return "\n".join(lines)
+
+
+_OCR_MIN_CHARS = 20  # below this, treat page as empty and try OCR
+
+
+def _has_tesseract() -> bool:
+    """True if the tesseract binary is on PATH. Cached per-process."""
+    return shutil.which("tesseract") is not None
+
+
+def _page_text_via_fitz(page) -> str:
+    return page.get_text("text") or ""
+
+
+def _extract_pages_text(pdf_path: Path) -> list[dict]:
+    """Extract per-page text. ocr_used is False here; OCR fallback is added in Task 7."""
+    out = []
+    with fitz.open(pdf_path) as doc:
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = _page_text_via_fitz(page).strip()
+            if len(text) >= _OCR_MIN_CHARS:
+                out.append({"page": i + 1, "text": text, "ocr_used": False})
+            else:
+                # In Task 7 this branch will attempt OCR. For now: empty.
+                out.append({"page": i + 1, "text": "", "ocr_used": False})
+    return out
 
 
 if __name__ == "__main__":

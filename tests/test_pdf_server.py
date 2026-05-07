@@ -158,3 +158,28 @@ def test_to_tsv_no_truncation_under_cap():
     import pdf_server
     out = pdf_server._to_tsv(rows=[["a"], [1], [2]], header_lines=[], max_chars=50000)
     assert "truncated" not in out
+
+
+def test_extract_pages_text_simple(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pages = pdf_server._extract_pages_text(simple_text_pdf)
+    assert len(pages) == 5
+    assert pages[0]["page"] == 1
+    assert "Page 1 of simple text fixture" in pages[0]["text"]
+    assert pages[0]["ocr_used"] is False
+
+
+def test_extract_pages_text_empty_page_marked(scanned_pdf, monkeypatch):
+    import importlib
+    import pdf_server
+    # Force OCR-disabled path so the empty page comes back with text=""
+    monkeypatch.setattr("pdf_server._has_tesseract", lambda: False)
+    importlib.reload(pdf_server)
+    monkeypatch.setattr("pdf_server._has_tesseract", lambda: False)
+    pages = pdf_server._extract_pages_text(scanned_pdf)
+    assert len(pages) == 3
+    # Page 2 is image-only — should have empty text and ocr_used=False.
+    assert pages[1]["text"] == ""
+    assert pages[1]["ocr_used"] is False
