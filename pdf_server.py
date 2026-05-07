@@ -639,6 +639,58 @@ def pdf_read_section(path: str, heading: str, level: int | None = None) -> str:
     return "\n".join(header + [""] + body_blocks).rstrip()
 
 
+_EXTRACT_TABLES_CAP = 20
+
+
+@mcp.tool()
+def pdf_extract_tables(path: str, page: int | None = None) -> str:
+    """Extract tables as TSV. page=None returns every table grouped by page;
+    page=N returns only tables on that page (1-based). Hard cap 20 tables per
+    call — narrow with page= when truncated."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    total = parsed["meta"]["page_count"]
+    if page is not None and page < 1:
+        raise ValueError("page must be >= 1")
+    if page is not None and page > total:
+        return f"# page {page} > page_count {total}, nothing to show"
+
+    tables = parsed["tables"]
+    if page is not None:
+        tables = [t for t in tables if t["page"] == page]
+
+    pages_with = sorted({t["page"] for t in tables})
+    if page is not None:
+        header = [f"# {len(tables)} tables on page={page} of {total}"]
+    else:
+        header = [
+            f"# {len(tables)} tables in document"
+            + (f", on pages: {', '.join(str(p) for p in pages_with)}" if tables else "")
+        ]
+
+    if not tables:
+        return "\n".join(header)
+
+    capped = tables[:_EXTRACT_TABLES_CAP]
+    truncated = len(tables) - len(capped)
+
+    blocks = list(header) + [""]
+    for t in capped:
+        rows = t["rows"]
+        n_rows = len(rows)
+        n_cols = len(rows[0]) if rows else 0
+        blocks.append(
+            f"## table {t['index']} (page {t['page']}, {n_rows} rows × {n_cols} cols)"
+        )
+        blocks.append(_to_tsv(rows, header_lines=[], max_chars=_TSV_MAX_CHARS))
+        blocks.append("")
+    if truncated:
+        blocks.append(
+            f"# truncated, {truncated} more tables omitted — use page= to narrow"
+        )
+    return "\n".join(blocks).rstrip()
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")

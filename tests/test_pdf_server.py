@@ -588,3 +588,42 @@ def test_read_section_level_filter(with_toc_pdf):
     # Only level 1 entries — picks "1. Predmet ugovora", not "1.1 Definicije".
     out = pdf_server.pdf_read_section("with-toc.pdf", "Predmet", level=1)
     assert "1. Predmet ugovora" in out
+
+
+def test_extract_tables_all(with_tables_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_tables("with-tables.pdf")
+    assert "4 tables" in out
+    assert "## table 0 (page 1" in out
+    assert "Vijak M8x40 inox" in out
+    assert "## table" in out
+
+
+def test_extract_tables_page_filter(with_tables_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_tables("with-tables.pdf", page=2)
+    # 2 tables on page 2.
+    assert "page=2" in out
+    assert "Materijal" in out
+    assert "Vijak M8x40 inox" not in out  # page 1 content
+
+
+def test_extract_tables_page_no_tables(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_tables("simple-text.pdf")
+    assert "0 tables" in out
+
+
+def test_extract_tables_invalid_page(with_tables_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="page must be"):
+        pdf_server.pdf_extract_tables("with-tables.pdf", page=0)
