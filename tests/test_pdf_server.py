@@ -43,3 +43,9 @@ def test_safe_rejects_absolute_outside(sandbox):
     importlib.reload(pdf_server)
     with pytest.raises(ValueError, match="escapes sandbox root"):
         pdf_server._safe("/etc/passwd")
+
+
+def test_simple_text_fixture_lands_in_sandbox(simple_text_pdf, sandbox):
+    assert simple_text_pdf == sandbox / "simple-text.pdf"
+    assert simple_text_pdf.exists()
+    assert simple_text_pdf.read_bytes()[:5] == b"%PDF-"

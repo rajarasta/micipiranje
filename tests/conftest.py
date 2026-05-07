@@ -62,3 +62,50 @@ def large_xlsx(sandbox):
         "name": [f"Item {i}" for i in range(10000)],
     }).to_excel(path, index=False, engine="openpyxl")
     return path
+
+
+import shutil
+
+FIXTURE_PDF_DIR = Path(__file__).parent / "fixtures" / "pdf"
+
+
+def _copy_pdf(name: str, sandbox: Path) -> Path:
+    src = FIXTURE_PDF_DIR / name
+    dst = sandbox / name
+    shutil.copy(src, dst)
+    return dst
+
+
+@pytest.fixture
+def simple_text_pdf(sandbox):
+    return _copy_pdf("simple-text.pdf", sandbox)
+
+
+@pytest.fixture
+def with_toc_pdf(sandbox):
+    return _copy_pdf("with-toc.pdf", sandbox)
+
+
+@pytest.fixture
+def with_tables_pdf(sandbox):
+    return _copy_pdf("with-tables.pdf", sandbox)
+
+
+@pytest.fixture
+def scanned_pdf(sandbox):
+    return _copy_pdf("scanned-page.pdf", sandbox)
+
+
+@pytest.fixture
+def croatian_pdf(sandbox):
+    return _copy_pdf("croatian.pdf", sandbox)
+
+
+@pytest.fixture
+def large_pdf(sandbox):
+    return _copy_pdf("large.pdf", sandbox)
+
+
+@pytest.fixture
+def encrypted_pdf(sandbox):
+    return _copy_pdf("encrypted.pdf", sandbox)
