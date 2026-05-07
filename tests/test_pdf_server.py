@@ -542,3 +542,49 @@ def test_find_pages_limit_clamped(with_toc_pdf):
     importlib.reload(pdf_server)
     with pytest.raises(ValueError, match="query cannot be empty"):
         pdf_server.pdf_find_pages("with-toc.pdf", "")
+
+
+def test_read_section_exact_match(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_section("with-toc.pdf", "2.1.1 Rok isporuke")
+    assert "2.1.1 Rok isporuke" in out
+    assert "page 6" in out
+    # Section spans only page 6 (next entry "3. Cijena i placanje" starts on page 7).
+    assert "Section 7" not in out  # text from a later page should not appear
+
+
+def test_read_section_fuzzy_match(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_section("with-toc.pdf", "rok isporuke")
+    assert "Rok isporuke" in out
+
+
+def test_read_section_no_match(with_toc_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="not found"):
+        pdf_server.pdf_read_section("with-toc.pdf", "Nepoznata sekcija xyz")
+
+
+def test_read_section_no_toc(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="no TOC bookmarks"):
+        pdf_server.pdf_read_section("simple-text.pdf", "anything")
+
+
+def test_read_section_level_filter(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Only level 1 entries — picks "1. Predmet ugovora", not "1.1 Definicije".
+    out = pdf_server.pdf_read_section("with-toc.pdf", "Predmet", level=1)
+    assert "1. Predmet ugovora" in out

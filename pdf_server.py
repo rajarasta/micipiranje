@@ -566,6 +566,79 @@ def pdf_find_pages(
     return out
 
 
+_HEADING_THRESHOLD = 70
+
+
+@mcp.tool()
+def pdf_read_section(path: str, heading: str, level: int | None = None) -> str:
+    """Return the full text of a TOC section by heading. Heading is matched
+    fuzzily (rapidfuzz.partial_ratio >= 70) against bookmark titles. Section
+    runs from its starting page until the page before the next bookmark of
+    the same or higher level. Pass level=N to restrict matching to entries
+    at depth N. Errors if the PDF has no TOC bookmarks."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    outline = parsed["outline"]
+    if not outline:
+        raise ValueError(
+            "PDF has no TOC bookmarks; cannot resolve sections — use pdf_search instead"
+        )
+
+    pool = [e for e in outline if level is None or e["level"] == level]
+    if not pool:
+        raise ValueError(
+            f"no TOC entries at level={level}; available levels: "
+            f"{sorted({e['level'] for e in outline})}"
+        )
+
+    scored = sorted(
+        (
+            (int(fuzz.partial_ratio(heading, e["title"])), idx, e)
+            for idx, e in enumerate(pool)
+        ),
+        key=lambda x: (-x[0], x[1]),
+    )
+    best_score, _, best_entry = scored[0]
+    if best_score < _HEADING_THRESHOLD:
+        suggestions = ", ".join(e["title"] for _, _, e in scored[:3])
+        raise ValueError(
+            f"section {heading!r} not found; nearest TOC entries: {suggestions}"
+        )
+
+    other_top: list[str] = []
+    if len(scored) > 1 and scored[1][0] == best_score:
+        other_top = [e["title"] for _, _, e in scored[1:4] if _ == best_score]
+
+    # Determine end page: page before next entry of same-or-higher level in the FULL outline.
+    start_page = best_entry["page"]
+    best_level = best_entry["level"]
+    full_idx = next(i for i, e in enumerate(outline) if e is best_entry)
+    end_page = parsed["meta"]["page_count"]
+    for e in outline[full_idx + 1 :]:
+        if e["level"] <= best_level:
+            end_page = e["page"] - 1
+            break
+
+    header = [
+        f"# section: {best_entry['title']!r}",
+        f"# pages {start_page}–{end_page} of {parsed['meta']['page_count']}",
+    ]
+    if other_top:
+        header.append(
+            "# other candidates with same score: "
+            + ", ".join(repr(t) for t in other_top)
+            + " — pass level= to disambiguate"
+        )
+
+    body_blocks: list[str] = []
+    for n in range(start_page, end_page + 1):
+        p = parsed["pages"][n - 1]
+        body_blocks.append(f"## page {n}")
+        body_blocks.append(p["text"])
+        body_blocks.append("")
+    return "\n".join(header + [""] + body_blocks).rstrip()
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
