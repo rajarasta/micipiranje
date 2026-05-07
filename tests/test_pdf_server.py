@@ -215,3 +215,27 @@ def test_extract_pages_text_ocr_unavailable(scanned_pdf, monkeypatch):
     pages = pdf_server._extract_pages_text(scanned_pdf)
     assert pages[1]["text"] == ""
     assert pages[1]["ocr_used"] is False
+
+
+def test_extract_tables_with_tables(with_tables_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    tables = pdf_server._extract_tables(with_tables_pdf)
+    # 4 tables across 3 pages.
+    assert len(tables) == 4
+    pages = [t["page"] for t in tables]
+    assert pages == [1, 2, 2, 3]
+    # Table 1 should have header row "Stavka, Kolicina, JM, Cijena".
+    first = tables[0]
+    assert first["index"] == 0
+    assert first["rows"][0] == ["Stavka", "Kolicina", "JM", "Cijena"]
+    assert ["Vijak M8x40 inox", "500", "kom", "0.45"] in first["rows"]
+
+
+def test_extract_tables_no_tables(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    tables = pdf_server._extract_tables(simple_text_pdf)
+    assert tables == []

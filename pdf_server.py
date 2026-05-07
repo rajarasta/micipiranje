@@ -24,6 +24,7 @@ import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF
+import pdfplumber
 
 from mcp.server.fastmcp import FastMCP
 
@@ -148,6 +149,25 @@ def _to_tsv(rows: list[list], header_lines: list[str], max_chars: int = 50000) -
                 f"# truncated, {truncated} more rows omitted — narrow your query or paginate"
             )
     return "\n".join(lines)
+
+
+def _extract_tables(pdf_path: Path) -> list[dict]:
+    """Walk every page, return tables as a list of dicts.
+
+    Each entry: {"page": int (1-based), "index": int (0-based within the page), "rows": list[list[str]]}.
+    Empty cells become "" instead of None; cell strings are .strip()-ed so the
+    column headers match what the LLM expects regardless of pdfplumber padding.
+    """
+    out = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for i, page in enumerate(pdf.pages, start=1):
+            tables = page.extract_tables() or []
+            for j, raw in enumerate(tables):
+                normalized = [
+                    ["" if c is None else str(c).strip() for c in row] for row in raw
+                ]
+                out.append({"page": i, "index": j, "rows": normalized})
+    return out
 
 
 _OCR_MIN_CHARS = 20  # below this, treat page as empty and try OCR
