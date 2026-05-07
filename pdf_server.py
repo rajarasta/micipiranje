@@ -17,6 +17,7 @@ LM_MCP_ROOT. See docs/superpowers/specs/2026-05-07-pdf-mcp-design.md.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -29,6 +30,7 @@ import pdfplumber
 from rapidfuzz import fuzz
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ImageContent, TextContent
 
 mcp = FastMCP("lm-pdf")
 
@@ -689,6 +691,69 @@ def pdf_extract_tables(path: str, page: int | None = None) -> str:
             f"# truncated, {truncated} more tables omitted — use page= to narrow"
         )
     return "\n".join(blocks).rstrip()
+
+
+_DPI_MIN = 72
+_DPI_MAX = 300
+_DPI_DEFAULT = 150
+
+
+@mcp.tool()
+def pdf_render_page(path: str, page: int, dpi: int = _DPI_DEFAULT) -> list:
+    """Render a single PDF page as a PNG and return it inline.
+
+    Returns a multipart MCP response: one TextContent block with metadata
+    (page number, DPI, dimensions, cache path) followed by one ImageContent
+    block with the base64 PNG (mimeType image/png) so vision-capable clients
+    receive the image directly. Single-page only — call again for more pages."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    total = parsed["meta"]["page_count"]
+    if not (1 <= page <= total):
+        raise ValueError(f"page must be in range [1, {total}]")
+    if not (_DPI_MIN <= dpi <= _DPI_MAX):
+        raise ValueError(f"dpi must be between {_DPI_MIN} and {_DPI_MAX}")
+
+    cache_disabled = _cache_disabled()
+    render_path = _render_cache_path(target, page, dpi)
+    png_bytes: bytes | None = None
+    cache_note = ""
+
+    if not cache_disabled and render_path.exists():
+        png_bytes = render_path.read_bytes()
+        cache_note = f"# cached at: {render_path.relative_to(_root())}"
+    else:
+        with fitz.open(target) as doc:
+            pix = doc.load_page(page - 1).get_pixmap(dpi=dpi)
+            png_bytes = pix.tobytes("png")
+        if cache_disabled:
+            cache_note = "# render not cached: LM_PDF_NO_CACHE=1"
+        else:
+            try:
+                render_path.parent.mkdir(parents=True, exist_ok=True)
+                render_path.write_bytes(png_bytes)
+                cache_note = f"# cached at: {render_path.relative_to(_root())}"
+            except OSError as e:
+                cache_note = f"# render not cached: {e.strerror or e}"
+
+    # PNG IHDR chunk: width at bytes [16:20], height at [20:24], big-endian.
+    width = int.from_bytes(png_bytes[16:20], "big")
+    height = int.from_bytes(png_bytes[20:24], "big")
+    size_kb = len(png_bytes) // 1024
+    text_lines = [
+        f"# page {page} of {total}, rendered at {dpi} dpi ({width}×{height} px, {size_kb} KB)",
+    ]
+    if cache_note:
+        text_lines.append(cache_note)
+
+    return [
+        TextContent(type="text", text="\n".join(text_lines)),
+        ImageContent(
+            type="image",
+            data=base64.b64encode(png_bytes).decode("ascii"),
+            mimeType="image/png",
+        ),
+    ]
 
 
 if __name__ == "__main__":

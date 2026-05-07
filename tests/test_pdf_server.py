@@ -627,3 +627,66 @@ def test_extract_tables_invalid_page(with_tables_pdf):
     importlib.reload(pdf_server)
     with pytest.raises(ValueError, match="page must be"):
         pdf_server.pdf_extract_tables("with-tables.pdf", page=0)
+
+
+def test_render_page_returns_text_and_image(simple_text_pdf):
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=100)
+    assert isinstance(out, list)
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(text_items) == 1
+    assert len(image_items) == 1
+    assert "page 1 of 5" in text_items[0].text
+    assert image_items[0].mimeType == "image/png"
+    # base64 PNG should start with iVBORw0KGgo (the PNG header in base64).
+    assert image_items[0].data.startswith("iVBORw0KGgo")
+
+
+def test_render_page_caches_png(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pdf_server.pdf_render_page("simple-text.pdf", page=2, dpi=72)
+    expected = pdf_server._render_cache_path(simple_text_pdf, page=2, dpi=72)
+    assert expected.exists()
+    assert expected.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_render_page_invalid_page(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="page must be in range"):
+        pdf_server.pdf_render_page("simple-text.pdf", page=99)
+    with pytest.raises(ValueError, match="page must be in range"):
+        pdf_server.pdf_render_page("simple-text.pdf", page=0)
+
+
+def test_render_page_invalid_dpi(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="dpi must be between"):
+        pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=10)
+    with pytest.raises(ValueError, match="dpi must be between"):
+        pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=999)
+
+
+def test_render_page_no_cache_env(simple_text_pdf, monkeypatch):
+    import importlib
+    from mcp.types import ImageContent
+    import pdf_server
+    monkeypatch.setenv("LM_PDF_NO_CACHE", "1")
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(image_items) == 1
+    # No PNG should be written to disk in NO_CACHE mode.
+    expected = pdf_server._render_cache_path(simple_text_pdf, page=1, dpi=72)
+    assert not expected.exists()
