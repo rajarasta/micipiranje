@@ -690,3 +690,32 @@ def test_render_page_no_cache_env(simple_text_pdf, monkeypatch):
     # No PNG should be written to disk in NO_CACHE mode.
     expected = pdf_server._render_cache_path(simple_text_pdf, page=1, dpi=72)
     assert not expected.exists()
+
+
+def test_smoke_full_pipeline(with_toc_pdf, with_tables_pdf, simple_text_pdf):
+    """Run every tool in the order an LLM would: overview → search → find_pages
+    → read_section → extract_tables → render_page. The assertion focus is that
+    nothing raises and outputs cross-reference each other consistently."""
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    importlib.reload(pdf_server)
+
+    overview = pdf_server.pdf_overview("with-toc.pdf")
+    assert "page_count=10" in overview
+
+    search_out = pdf_server.pdf_search("with-toc.pdf", "Rok isporuke", mode="exact")
+    assert "Rok isporuke" in search_out
+
+    find_out = pdf_server.pdf_find_pages("with-toc.pdf", "Rok isporuke", mode="exact")
+    assert "10 pages" in find_out
+
+    section_out = pdf_server.pdf_read_section("with-toc.pdf", "2.1.1 Rok isporuke")
+    assert "page 6" in section_out
+
+    tables_out = pdf_server.pdf_extract_tables("with-tables.pdf")
+    assert "Vijak M8x40 inox" in tables_out
+
+    render_out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
+    assert any(isinstance(c, TextContent) for c in render_out)
+    assert any(isinstance(c, ImageContent) for c in render_out)
