@@ -10,7 +10,6 @@ Output PDFs are committed to git; regenerate only when the spec changes.
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -133,7 +132,6 @@ def build_with_tables() -> None:
 
 def _draw_table(page, x, y, col_widths, row_height, rows):
     n_rows = len(rows)
-    n_cols = len(col_widths)
     width = sum(col_widths)
     height = row_height * n_rows
     # Outer rect
@@ -209,10 +207,23 @@ def build_large() -> None:
 
 
 def build_encrypted() -> None:
-    """1-page PDF encrypted with a user password."""
+    """1-page PDF encrypted AES-128 with owner_pw='owner', user_pw='user'.
+
+    Note: PyMuPDF AES encryption uses a random IV per save, so the encrypted
+    fixture is intrinsically non-deterministic at the byte level even with
+    no_new_id=True. Tests check the file is encrypted (raises ValueError
+    when opened), not its byte content.
+    """
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     page.insert_text((50, 100), "Secret content.", fontsize=14)
+    doc.set_metadata({
+        "title": "encrypted",
+        "author": "lm-pdf fixtures",
+        "creator": "build_fixtures.py",
+        "creationDate": "D:20260101000000Z",
+        "modDate": "D:20260101000000Z",
+    })
     target = OUT / "encrypted.pdf"
     doc.save(
         target,
