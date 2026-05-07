@@ -230,6 +230,83 @@ def _extract_pages_text(pdf_path: Path) -> list[dict]:
     return out
 
 
+_PARSE_VERSION = 1
+
+
+def _extract_outline(pdf_path: Path) -> list[dict]:
+    with fitz.open(pdf_path) as doc:
+        toc = doc.get_toc(simple=True) or []
+    return [{"level": lvl, "title": title, "page": page} for lvl, title, page in toc]
+
+
+def _extract_meta(pdf_path: Path) -> dict:
+    with fitz.open(pdf_path) as doc:
+        m = doc.metadata or {}
+        return {
+            "title": m.get("title") or "",
+            "author": m.get("author") or "",
+            "creator": m.get("creator") or "",
+            "creation_date": m.get("creationDate") or "",
+            "page_count": doc.page_count,
+        }
+
+
+def _parse_pdf(pdf_path: Path) -> dict:
+    """Run the full parse pipeline and return a structured payload.
+
+    The caller decides whether to also write it to cache via _write_cache.
+    """
+    pages = _extract_pages_text(pdf_path)
+    tables = _extract_tables(pdf_path)
+    outline = _extract_outline(pdf_path)
+    meta = _extract_meta(pdf_path)
+    stats = {
+        "pages_with_text": sum(1 for p in pages if p["text"] and not p["ocr_used"]),
+        "pages_ocr": sum(1 for p in pages if p["ocr_used"]),
+        "pages_empty": sum(1 for p in pages if not p["text"]),
+        "tables_count": len(tables),
+    }
+    st = pdf_path.stat()
+    return {
+        "version": _PARSE_VERSION,
+        "source": pdf_path.name,
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+        "meta": meta,
+        "outline": outline,
+        "pages": pages,
+        "tables": tables,
+        "stats": stats,
+    }
+
+
+def _get_parsed(pdf_path: Path) -> dict:
+    """Read cached parse if fresh, otherwise parse-and-cache."""
+    cached = _read_cache(pdf_path)
+    if cached and cached.get("version") == _PARSE_VERSION:
+        return cached
+    parsed = _parse_pdf(pdf_path)
+    _write_cache(pdf_path, parsed)
+    return parsed
+
+
+def _open_target(path: str) -> Path:
+    """Resolve a sandboxed path and validate it points to a readable PDF.
+
+    Raises FileNotFoundError, ValueError("expected .pdf") or ValueError("PDF is encrypted").
+    """
+    target = _safe(path)
+    if not target.exists():
+        raise FileNotFoundError(str(target))
+    if target.suffix.lower() != ".pdf":
+        raise ValueError(f"expected .pdf, got {target.suffix!r}")
+    # Detect encryption early — fitz.open succeeds, but doc.is_encrypted is True.
+    with fitz.open(target) as doc:
+        if doc.is_encrypted:
+            raise ValueError("PDF is encrypted; password not supported")
+    return target
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")

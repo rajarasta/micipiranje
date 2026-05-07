@@ -239,3 +239,63 @@ def test_extract_tables_no_tables(simple_text_pdf):
     importlib.reload(pdf_server)
     tables = pdf_server._extract_tables(simple_text_pdf)
     assert tables == []
+
+
+def test_extract_outline_with_toc(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    outline = pdf_server._extract_outline(with_toc_pdf)
+    assert len(outline) == 10
+    assert outline[0] == {"level": 1, "title": "1. Predmet ugovora", "page": 1}
+    assert outline[5] == {"level": 3, "title": "2.1.1 Rok isporuke", "page": 6}
+
+
+def test_extract_outline_no_toc(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    outline = pdf_server._extract_outline(simple_text_pdf)
+    assert outline == []
+
+
+def test_extract_meta(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    meta = pdf_server._extract_meta(with_toc_pdf)
+    assert meta["title"] == "with-toc"
+    assert meta["page_count"] == 10
+
+
+def test_get_parsed_caches_after_first_call(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    cache_path = pdf_server._cache_path(simple_text_pdf)
+    assert not cache_path.exists()
+    parsed = pdf_server._get_parsed(simple_text_pdf)
+    assert cache_path.exists()
+    # Second call must return identical content from cache (no re-parse).
+    parsed2 = pdf_server._get_parsed(simple_text_pdf)
+    assert parsed == parsed2
+    assert parsed["meta"]["page_count"] == 5
+    assert len(parsed["pages"]) == 5
+    assert parsed["stats"]["pages_with_text"] == 5
+
+
+def test_get_parsed_invalidates_when_pdf_changes(simple_text_pdf, with_toc_pdf, sandbox):
+    import importlib
+    import os
+    import shutil
+    import time
+    import pdf_server
+    importlib.reload(pdf_server)
+    # First parse: simple-text contents at this path.
+    pdf_server._get_parsed(simple_text_pdf)
+    # Overwrite file with a different PDF (with-toc has a different size and 10 pages).
+    time.sleep(0.01)
+    shutil.copy(with_toc_pdf, simple_text_pdf)
+    os.utime(simple_text_pdf, None)
+    parsed = pdf_server._get_parsed(simple_text_pdf)
+    assert parsed["meta"]["page_count"] == 10
