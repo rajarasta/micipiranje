@@ -115,3 +115,46 @@ def test_cache_disabled_via_env(simple_text_pdf, monkeypatch):
     pdf_server._write_cache(simple_text_pdf, {"version": 1, "pages": []})
     # With cache disabled, _read_cache must not return data even if a stale file exists.
     assert pdf_server._read_cache(simple_text_pdf) is None
+
+def test_to_tsv_basic():
+    import pdf_server
+    out = pdf_server._to_tsv(
+        rows=[["a", "b"], [1, "x"], [2, "y"]],
+        header_lines=["# meta"],
+    )
+    assert out == "# meta\na\tb\n1\tx\n2\ty"
+
+
+def test_to_tsv_escapes_tab_newline_cr():
+    import pdf_server
+    out = pdf_server._to_tsv(
+        rows=[["a"], ["with\ttab"], ["with\nnewline"], ["with\rcr"]],
+        header_lines=[],
+    )
+    lines = out.split("\n")
+    assert lines == ["a", "with\\ttab", "with\\nnewline", "with\\rcr"]
+
+
+def test_to_tsv_none_to_empty():
+    import pdf_server
+    out = pdf_server._to_tsv(rows=[["a", "b"], [1, None], [None, "x"]], header_lines=[])
+    assert out == "a\tb\n1\t\n\tx"
+
+
+def test_to_tsv_truncates_at_row_boundary():
+    import pdf_server
+    rows = [["a"]] + [[f"row{i}"] for i in range(100)]
+    out = pdf_server._to_tsv(rows=rows, header_lines=["# big"], max_chars=40)
+    lines = out.split("\n")
+    assert lines[-1].startswith("# truncated,")
+    assert "more rows omitted" in lines[-1]
+    data = [l for l in lines if l.startswith("row")]
+    # Each data row is one full token; no partial rows.
+    for i, l in enumerate(data):
+        assert l == f"row{i}"
+
+
+def test_to_tsv_no_truncation_under_cap():
+    import pdf_server
+    out = pdf_server._to_tsv(rows=[["a"], [1], [2]], header_lines=[], max_chars=50000)
+    assert "truncated" not in out

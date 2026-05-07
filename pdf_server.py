@@ -112,6 +112,41 @@ def _write_cache(target: Path, payload: dict) -> None:
             pass
 
 
+
+def _escape_cell(v) -> str:
+    if v is None:
+        return ""
+    s = str(v)
+    return s.replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+
+
+def _to_tsv(rows: list[list], header_lines: list[str], max_chars: int = 50000) -> str:
+    """Render rows as TSV with optional `# ...` metadata lines on top.
+
+    rows[0] is the header row (rendered as-is). Cells are escaped per
+    _escape_cell. If the running output would exceed max_chars, truncate at
+    the row boundary and append a `# truncated, N more rows omitted` line.
+    """
+    lines = list(header_lines)
+    if rows:
+        head, *data = rows
+        lines.append("\t".join(_escape_cell(c) for c in head))
+        char_count = sum(len(l) + 1 for l in lines)
+        truncated = 0
+        for i, row in enumerate(data):
+            line = "\t".join(_escape_cell(c) for c in row)
+            if char_count + len(line) + 1 > max_chars:
+                truncated = len(data) - i
+                break
+            lines.append(line)
+            char_count += len(line) + 1
+        if truncated:
+            lines.append(
+                f"# truncated, {truncated} more rows omitted — narrow your query or paginate"
+            )
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
