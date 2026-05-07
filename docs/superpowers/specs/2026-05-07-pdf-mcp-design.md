@@ -133,15 +133,35 @@ Nužan jer:
 5. Otvori PDF kroz pdfplumber, `page.extract_tables()` za svaku stranicu, akumuliraj u `tables`.
 6. Zapiši cache JSON atomski (`tempfile` + `os.replace`).
 
-### 5.4 Disable / debug
+### 5.4 Render cache (zaseban od JSON cache-a)
 
-`LM_PDF_NO_CACHE=1` env var → preskoči disk cache, parsiraj svaki put. Za debug i development.
+`pdf_render_page` ne sprema PNG-ove u glavni JSON cache (binarni podaci ne pripadaju u JSON, plus različiti DPI-ovi traže različite fajlove). Umjesto toga:
+
+- Direktorij: `<LM_MCP_ROOT>/.lm-pdf-cache/renders/`
+- Naziv fajla: `<basename>__<size>__<mtime_ns>__p<N>__dpi<D>.png`
+- Cache hit = fajl postoji → samo ga pročitaj i vrati.
+- Sa istim ključem kao JSON cache (size+mtime), invalidira se zajedno s PDF-om kad se fajl promijeni.
+- Stari render fajlovi za zastarjele verzije PDF-a ostaju na disku (ne brišemo automatski) — smatramo zanemarivim za lokalni sandbox.
+
+### 5.5 Disable / debug
+
+`LM_PDF_NO_CACHE=1` env var → preskoči i JSON i render disk cache, parsiraj/renderiraj svaki put. Za debug i development.
 
 ## 6. Tool API
 
-Svi alati su read-only. Svi prihvaćaju `path` kao prvi argument (relativan na sandbox root).
+Sedam alata, svi read-only. Svi prihvaćaju `path` kao prvi argument (relativan na sandbox root).
 
 Stranice su **1-based** kroz cijeli API (kako PDF stranice ljudi pišu). Ovo se razlikuje od xlsx-a koji ima 0-based redove jer ima header.
+
+| Alat | Svrha |
+| --- | --- |
+| `pdf_overview` | Pregled: dimensions, TOC, stats, tablice |
+| `pdf_read_pages` | Tekst raspona stranica |
+| `pdf_read_section` | Tekst sekcije po naslovu (TOC) |
+| `pdf_search` | Fuzzy/exact pretraga paragrafa |
+| `pdf_extract_tables` | Ekstrakcija tablica kao TSV |
+| `pdf_find_pages` | Concise popis stranica + broj matcheva |
+| `pdf_render_page` | Render stranice kao PNG za vision modele |
 
 ### 6.1 `pdf_overview(path)`
 
@@ -233,6 +253,72 @@ Pretraga teksta.
 - Hard cap **20 tablica po pozivu**, preko toga truncate s napomenom `# truncated, X more tables omitted — use page= to narrow`.
 - Empty cells → prazan string u TSV-u (isto kao xlsx).
 
+### 6.6 `pdf_find_pages(path, query, mode="fuzzy", limit=20)`
+
+Concise popis stranica gdje se pojavljuje upit, s brojem hitova po stranici. Razlika od `pdf_search`: ne vraća paragrafe, samo agregat — manje tokena, lakše za LLM "iterativni workflow" (find → render).
+
+- `mode`:
+  - `"exact"` — case-insensitive substring match na paragrafu (isto kao `pdf_search`).
+  - `"fuzzy"` (default) — `rapidfuzz.token_set_ratio(query, paragraph)` ≥ 60.
+- Iste granularnosti kao `pdf_search` (paragraf), ali agregirano po stranici.
+- Output (TSV):
+
+  ```text
+  # pages with "vijak M8x40", mode=fuzzy, threshold=60: 4 pages, 7 total matches
+  page    section            hits    top_score
+  5       3.2 Specifikacija  3       94
+  12      4.1 Naručivanje    1       88
+  18      4.1 Naručivanje    2       91
+  33      6. Garancija       1       72
+  ```
+
+- Sortirano po `page` ascending (po prirodnom redu dokumenta), ne po score-u — LLM hoće znati gdje pretraživati od početka prema kraju.
+- `top_score` (samo u fuzzy modu) = najveći score paragrafa na toj stranici.
+- `limit` — maksimalan broj stranica u outputu (ne maksimum hitova). Default 20, hard cap 100. Preko limit-a → `# truncated, X more pages omitted`.
+- Edge case: bez matcheva → `# no pages match query`.
+
+### 6.7 `pdf_render_page(path, page, dpi=150)`
+
+Renderira jednu PDF stranicu kao PNG i vraća kombinirani odgovor (text metadata + image content). Glavni use case: korisnik kaže "daj mi stranicu 12 da vidimo ugovor" i vision model dobiva sliku stranice direktno u kontekst.
+
+**Argumenti:**
+
+- `page` — 1-based broj stranice. Mora biti `1 ≤ page ≤ page_count`, inače `ValueError`.
+- `dpi` — default **150** (~1240×1754 px za A4, čitljiv tekst). Range `[72, 300]`, izvan toga `ValueError("dpi must be between 72 and 300")`.
+
+**Implementacija:**
+
+- `doc[page-1].get_pixmap(dpi=dpi).tobytes("png")` → PNG bytes.
+- Spremi u disk cache: `<LM_MCP_ROOT>/.lm-pdf-cache/renders/<basename>__<size>__<mtime_ns>__p<N>__dpi<D>.png`.
+  - Cache key uključuje sve parametre koji utječu na izlaz → različite DPI vrijednosti dobiju zasebne fajlove.
+  - Drugi poziv s istim parametrima → instant (čita s diska).
+- Cache direktorij `renders/` se kreira pri prvom pisanju.
+
+**Return type — multipart MCP response:**
+
+FastMCP tool vraća listu od dva content itema:
+
+1. `TextContent(type="text", text=<metadata>)` — header s informacijama o stranici i path do fajla:
+
+   ```text
+   # page 12 of 47, rendered at 150 dpi (1240×1754 px, 348 KB)
+   # cached at: .lm-pdf-cache/renders/ugovor.pdf__285431__1714867234__p12__dpi150.png
+   ```
+
+2. `ImageContent(type="image", data=<base64-png>, mimeType="image/png")` — sirov PNG za vision model.
+
+LM Studio MCP klijent koji prepozna `ImageContent` automatski proslijedi sliku vision-capable modelu kao multimodal input. Klijenti bez vision podrške (text-only modeli) primit će samo `TextContent` — alat ne pukne, samo nema vizualnog efekta.
+
+**Cap:** jedan poziv = jedna stranica.
+
+- Razlog: A4 @ 150 DPI ~ 350 KB PNG → ~470 KB base64 → fits u jedan MCP message.
+- Za više stranica LLM iterira (`pdf_find_pages` → 3 hita → 3 zasebna `pdf_render_page` poziva).
+- Sprječava se da jedan poziv pretrpa context predugačkim multipart-om.
+
+**Out-of-cache scenario (`LM_PDF_NO_CACHE=1`):**
+
+Generiraj PNG u memoriji, vrati ga, ne piši na disk.
+
 ## 7. Output format
 
 Sve vraća **TSV ili plain text s `# ...` metadata headerom** (isti pattern kao xlsx). Razlozi:
@@ -271,11 +357,19 @@ Pravila:
 - Section heading bez matcha → `ValueError` sa top 3 najbližih kandidata.
 - Više section-a s istim score-om → uzmi prvi, javi ostale u headeru.
 
-**Search:**
+**Search / find_pages:**
 
 - Prazan `query` → `ValueError("query cannot be empty")`.
 - `page_range` van granica → klemaj na `[1, page_count]`, javi u headeru.
-- Nijedan match (fuzzy ispod praga) → prazan rezultat s napomenom `# no matches`.
+- Nijedan match (fuzzy ispod praga) → prazan rezultat s napomenom `# no matches` (search) ili `# no pages match query` (find_pages).
+- `find_pages` `limit` van granica `[1, 100]` → klemaj, javi u headeru.
+
+**Render:**
+
+- `page < 1` ili `page > page_count` → `ValueError("page must be in range [1, <page_count>]")`.
+- `dpi` van `[72, 300]` → `ValueError("dpi must be between 72 and 300")`.
+- Disk full pri pisanju render cache-a → log warning, fallback na in-memory PNG (server vraća sliku bez disk path-a; metadata header navodi `# render not cached: <razlog>`).
+- Klijent bez ImageContent podrške (text-only model) → klijent prikaže samo TextContent, alat se ne raspada.
 
 **OCR:**
 
@@ -331,14 +425,15 @@ Sukladno postojećem dual-frontend setupu (LM Studio + llama.cpp WebUI), `lm-pdf
 - Pisanje / mijenjanje PDF-a (read-only).
 - Encrypted PDF-ovi (password handling).
 - PDF forms (fillable form fields) — option E iz prve faze brainstorminga, eksplicitno odbačeno.
-- Ekstrakcija slika / figura — opcija F, eksplicitno odbačeno za prvi krug.
+- **Ekstrakcija individualnih slika/figura iz stranice** (cropped figures sa caption-om). `pdf_render_page` renderira **cijelu stranicu**; ako vision model treba pojedinu sliku, korisnik to dobiva uz cijeli kontekst stranice.
+- Render više stranica u jednom pozivu — namjerno ograničeno na 1 stranicu po `pdf_render_page`.
 - Cross-document search / kompariranje više PDF-ova.
 - Math / equations — koristio bi marker-pdf umjesto našeg pristupa.
 - Eksport u drugi format (HTML, DOCX).
 - Komparacija s xlsx-om / cross-tool join.
 - AI parser-i (docling, marker-pdf) — odbačeni u korist lakšeg toolchaina.
 
-Ako neka od ovih stavki zatreba u budućnosti, dodaje se kao zaseban alat — ne diramo postojećih 5.
+Ako neka od ovih stavki zatreba u budućnosti, dodaje se kao zaseban alat — ne diramo postojećih 7.
 
 ## 12. Test plan (skica)
 
@@ -353,7 +448,7 @@ Fixture datoteke (sve unutar `tests/fixtures/pdf/`):
 
 Pokrivenost:
 
-- Po jedan happy-path test za svaki od 5 alata.
+- Po jedan happy-path test za svaki od 7 alata.
 - Sandbox escape (path izvan root-a).
 - File ne postoji, krivi ekstenzija.
 - Encrypted PDF → ValueError.
@@ -361,6 +456,8 @@ Pokrivenost:
 - `pdf_read_pages` paginacija: start=1, sredina, preko range-a, count preko cap-a.
 - `pdf_read_section` s exact match-om, fuzzy match-om, ambiguous match-om, no-match (sa preporukama), no-TOC error.
 - `pdf_search` exact i fuzzy, hrvatski upit s dijakriticima, page_range filter, prazan upit.
+- `pdf_find_pages` agregacija: 0 hitova, 1 hit, više hitova na jednoj stranici, više stranica; sortiranje po `page` ascending; `top_score` u fuzzy modu.
+- `pdf_render_page` happy path: provjeri da output sadrži oba content-a (TextContent + ImageContent), PNG signature u dekodiranom base64, dimenzije pixmap-a odgovaraju očekivanju za zadani DPI; cache hit drugog poziva (file mtime ne mijenja se); `dpi` van granica → ValueError; `page` van granica → ValueError.
 - `pdf_extract_tables` na stranici s više tablica, na PDF-u bez tablica, page=None vs page=N.
 - OCR: skenirana stranica s tesseract-om instaliran (provjeri `ocr_used=true`); ako tesseract nije dostupan u CI-u, mock pytesseract.
 - Cache: prvi poziv puni cache, drugi koristi cache (provjera mtime-based invalidacije nakon `touch` fajla), `LM_PDF_NO_CACHE=1` flag.
