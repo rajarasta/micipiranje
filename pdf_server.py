@@ -307,6 +307,50 @@ def _open_target(path: str) -> Path:
     return target
 
 
+@mcp.tool()
+def pdf_overview(path: str) -> str:
+    """First pass over a PDF: file size, page count, metadata, TOC outline,
+    text/OCR/empty stats and a list of pages that contain tables. Use this
+    before any other pdf_* tool so you know what you are dealing with."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    meta = parsed["meta"]
+    stats = parsed["stats"]
+    outline = parsed["outline"]
+    tables = parsed["tables"]
+    size = parsed["size"]
+
+    lines: list[str] = [
+        f"# file={target.name}",
+        f"# size={size}",
+        f"# page_count={meta['page_count']}",
+    ]
+    for k in ("title", "author", "creator", "creation_date"):
+        if meta.get(k):
+            lines.append(f"# {k}={meta[k]}")
+    lines.append(
+        f"# stats: pages_with_text={stats['pages_with_text']} "
+        f"pages_ocr={stats['pages_ocr']} pages_empty={stats['pages_empty']}"
+    )
+    lines.append(f"# tables_count={stats['tables_count']}")
+    if tables:
+        pages_with_tables = sorted({t["page"] for t in tables})
+        lines.append(
+            "# tables on pages: " + ", ".join(str(p) for p in pages_with_tables)
+        )
+
+    if outline:
+        lines.append("")
+        lines.append("# outline:")
+        for entry in outline:
+            indent = "  " * (entry["level"] - 1)
+            lines.append(f"{indent}{entry['title']} (str. {entry['page']})")
+    else:
+        lines.append("# no TOC bookmarks; use pdf_search to locate sections")
+
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")

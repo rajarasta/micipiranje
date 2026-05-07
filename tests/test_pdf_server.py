@@ -299,3 +299,63 @@ def test_get_parsed_invalidates_when_pdf_changes(simple_text_pdf, with_toc_pdf, 
     os.utime(simple_text_pdf, None)
     parsed = pdf_server._get_parsed(simple_text_pdf)
     assert parsed["meta"]["page_count"] == 10
+
+
+def test_overview_with_toc(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_overview("with-toc.pdf")
+    assert "with-toc.pdf" in out
+    assert "page_count=10" in out
+    assert "1. Predmet ugovora" in out
+    assert "2.1.1 Rok isporuke" in out
+    assert "(str. 6)" in out
+    assert "no TOC bookmarks" not in out
+
+
+def test_overview_no_toc(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_overview("simple-text.pdf")
+    assert "page_count=5" in out
+    assert "no TOC bookmarks" in out
+
+
+def test_overview_tables_listed(with_tables_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_overview("with-tables.pdf")
+    assert "tables_count=4" in out
+    # Pages with tables should appear in the listing.
+    assert "tables on pages: 1, 2, 3" in out
+
+
+def test_overview_encrypted_raises(encrypted_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="encrypted"):
+        pdf_server.pdf_overview("encrypted.pdf")
+
+
+def test_overview_missing_file_raises(sandbox):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(FileNotFoundError):
+        pdf_server.pdf_overview("nope.pdf")
+
+
+def test_overview_wrong_extension_raises(sandbox):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    (sandbox / "x.txt").write_text("hi")
+    with pytest.raises(ValueError, match="expected .pdf"):
+        pdf_server.pdf_overview("x.txt")
