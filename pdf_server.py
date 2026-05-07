@@ -162,18 +162,51 @@ def _page_text_via_fitz(page) -> str:
     return page.get_text("text") or ""
 
 
+def _ocr_page(page, lang: str) -> str:
+    import pytesseract
+    from PIL import Image
+    pix = page.get_pixmap(dpi=200)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    try:
+        return pytesseract.image_to_string(img, lang=lang) or ""
+    except pytesseract.TesseractError:
+        return ""
+
+
+def _ocr_lang() -> str:
+    """Return language string for tesseract.
+
+    Defaults to "hrv+eng". Falls back to "eng" when hrv traineddata is missing.
+    Determined per-call to keep the helper stateless and easy to test.
+    """
+    import pytesseract
+    try:
+        langs = set(pytesseract.get_languages(config=""))
+    except (pytesseract.TesseractError, OSError):
+        return "eng"
+    if "hrv" in langs:
+        return "hrv+eng"
+    return "eng"
+
+
 def _extract_pages_text(pdf_path: Path) -> list[dict]:
-    """Extract per-page text. ocr_used is False here; OCR fallback is added in Task 7."""
+    """Per-page text. Falls back to Tesseract OCR for pages without a text layer."""
     out = []
+    use_ocr = _has_tesseract()
+    lang = _ocr_lang() if use_ocr else "eng"
     with fitz.open(pdf_path) as doc:
         for i in range(doc.page_count):
             page = doc.load_page(i)
             text = _page_text_via_fitz(page).strip()
             if len(text) >= _OCR_MIN_CHARS:
                 out.append({"page": i + 1, "text": text, "ocr_used": False})
-            else:
-                # In Task 7 this branch will attempt OCR. For now: empty.
-                out.append({"page": i + 1, "text": "", "ocr_used": False})
+                continue
+            if use_ocr:
+                ocr_text = _ocr_page(page, lang).strip()
+                if ocr_text:
+                    out.append({"page": i + 1, "text": ocr_text, "ocr_used": True})
+                    continue
+            out.append({"page": i + 1, "text": "", "ocr_used": False})
     return out
 
 

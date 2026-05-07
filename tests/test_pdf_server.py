@@ -183,3 +183,35 @@ def test_extract_pages_text_empty_page_marked(scanned_pdf, monkeypatch):
     # Page 2 is image-only — should have empty text and ocr_used=False.
     assert pages[1]["text"] == ""
     assert pages[1]["ocr_used"] is False
+
+
+def test_extract_pages_text_ocr_fallback(scanned_pdf, monkeypatch):
+    """Pretend tesseract is installed and pytesseract returns canned text."""
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    monkeypatch.setattr("pdf_server._has_tesseract", lambda: True)
+
+    def fake_image_to_string(img, lang=""):
+        # Deterministic stub regardless of input image.
+        return "OCR EXTRACTED TEXT FROM PAGE"
+
+    import pytesseract
+    monkeypatch.setattr(pytesseract, "image_to_string", fake_image_to_string)
+    pages = pdf_server._extract_pages_text(scanned_pdf)
+    # Pages 1 and 3 already have text; only page 2 (image-only) used OCR.
+    assert pages[0]["ocr_used"] is False
+    assert pages[2]["ocr_used"] is False
+    assert pages[1]["ocr_used"] is True
+    assert "OCR EXTRACTED TEXT FROM PAGE" in pages[1]["text"]
+
+
+def test_extract_pages_text_ocr_unavailable(scanned_pdf, monkeypatch):
+    """No tesseract → image-only page returns empty text, no error."""
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    monkeypatch.setattr("pdf_server._has_tesseract", lambda: False)
+    pages = pdf_server._extract_pages_text(scanned_pdf)
+    assert pages[1]["text"] == ""
+    assert pages[1]["ocr_used"] is False
