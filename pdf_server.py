@@ -17,7 +17,9 @@ LM_MCP_ROOT. See docs/superpowers/specs/2026-05-07-pdf-mcp-design.md.
 
 from __future__ import annotations
 
+import json
 import os
+import tempfile
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -42,6 +44,72 @@ def _safe(path: str) -> Path:
     if target != root and root not in target.parents:
         raise ValueError(f"path escapes sandbox root: {target}")
     return target
+
+
+_CACHE_DIR_NAME = ".lm-pdf-cache"
+_RENDERS_SUBDIR = "renders"
+
+
+def _cache_disabled() -> bool:
+    return os.environ.get("LM_PDF_NO_CACHE") == "1"
+
+
+def _cache_dir() -> Path:
+    d = _root() / _CACHE_DIR_NAME
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _renders_dir() -> Path:
+    d = _cache_dir() / _RENDERS_SUBDIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cache_key(target: Path) -> str:
+    st = target.stat()
+    return f"{target.name}__{st.st_size}__{st.st_mtime_ns}"
+
+
+def _cache_path(target: Path) -> Path:
+    return _cache_dir() / f"{_cache_key(target)}.json"
+
+
+def _render_cache_path(target: Path, page: int, dpi: int) -> Path:
+    key = _cache_key(target)
+    return _renders_dir() / f"{key}__p{page}__dpi{dpi}.png"
+
+
+def _read_cache(target: Path) -> dict | None:
+    if _cache_disabled():
+        return None
+    cp = _cache_path(target)
+    if not cp.exists():
+        return None
+    try:
+        with cp.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        # Corrupted cache → treat as miss; orchestrator will re-parse and overwrite.
+        return None
+
+
+def _write_cache(target: Path, payload: dict) -> None:
+    if _cache_disabled():
+        return
+    cp = _cache_path(target)
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=cp.name + ".", dir=str(cp.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, cp)
+    except OSError:
+        # Disk full or permission — caller still gets the payload in-memory.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
