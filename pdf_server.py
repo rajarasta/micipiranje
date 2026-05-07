@@ -307,6 +307,47 @@ def _open_target(path: str) -> Path:
     return target
 
 
+_READ_PAGES_CAP = 20
+
+
+@mcp.tool()
+def pdf_read_pages(path: str, start: int, count: int = 3) -> str:
+    """Read text of pages [start, start+count). start is 1-based. count default
+    3, hard cap 20. Inline tables are not rendered here — use pdf_extract_tables
+    for table content. Pages that were OCR'd are marked with `(OCR)`; pages that
+    have no text and no OCR available are marked `(no text)`."""
+    if start < 1:
+        raise ValueError("page must be >= 1")
+    if count <= 0:
+        raise ValueError("count must be > 0")
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    pages = parsed["pages"]
+    total = parsed["meta"]["page_count"]
+
+    if start > total:
+        return f"# start {start} > page_count {total}, nothing to show"
+
+    clamped = min(count, _READ_PAGES_CAP)
+    end_excl = min(start + clamped, total + 1)
+
+    blocks: list[str] = []
+    if clamped < count:
+        blocks.append(f"# count clamped to {clamped} (cap={_READ_PAGES_CAP})")
+    for n in range(start, end_excl):
+        p = pages[n - 1]
+        suffix = ""
+        if p["ocr_used"]:
+            suffix = " (OCR)"
+        elif not p["text"]:
+            suffix = " (no text)"
+        blocks.append(f"# page {n} of {total}{suffix}")
+        blocks.append("")
+        blocks.append(p["text"])
+        blocks.append("")
+    return "\n".join(blocks).rstrip()
+
+
 @mcp.tool()
 def pdf_overview(path: str) -> str:
     """First pass over a PDF: file size, page count, metadata, TOC outline,

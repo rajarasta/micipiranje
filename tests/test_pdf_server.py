@@ -359,3 +359,63 @@ def test_overview_wrong_extension_raises(sandbox):
     (sandbox / "x.txt").write_text("hi")
     with pytest.raises(ValueError, match="expected .pdf"):
         pdf_server.pdf_overview("x.txt")
+
+
+def test_read_pages_basic(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_pages("simple-text.pdf", start=1, count=2)
+    assert "# page 1 of 5" in out
+    assert "# page 2 of 5" in out
+    assert "Page 1 of simple text fixture" in out
+    assert "# page 3 of 5" not in out
+
+
+def test_read_pages_default_count_is_3(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_pages("simple-text.pdf", start=1)
+    assert "# page 3 of 5" in out
+    assert "# page 4 of 5" not in out
+
+
+def test_read_pages_start_past_end(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_pages("simple-text.pdf", start=99, count=3)
+    assert "start 99 > page_count 5" in out
+
+
+def test_read_pages_count_clamped(large_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_read_pages("large.pdf", start=1, count=999)
+    assert "count clamped to 20" in out
+    # 20 pages rendered, no page 21.
+    assert "# page 20 of 100" in out
+    assert "# page 21 of 100" not in out
+
+
+def test_read_pages_invalid_args(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="page must be"):
+        pdf_server.pdf_read_pages("simple-text.pdf", start=0)
+    with pytest.raises(ValueError, match="count must be"):
+        pdf_server.pdf_read_pages("simple-text.pdf", start=1, count=0)
+
+
+def test_read_pages_marks_ocr_and_empty(scanned_pdf, monkeypatch):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    monkeypatch.setattr("pdf_server._has_tesseract", lambda: False)
+    out = pdf_server.pdf_read_pages("scanned-page.pdf", start=1, count=3)
+    # Page 2 is image-only without OCR available → marked (no text).
+    assert "# page 2 of 3 (no text)" in out
