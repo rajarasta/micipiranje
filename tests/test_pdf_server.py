@@ -499,3 +499,46 @@ def test_search_page_range_invalid_shape(simple_text_pdf):
     importlib.reload(pdf_server)
     with pytest.raises(ValueError, match="2-element list"):
         pdf_server.pdf_search("simple-text.pdf", "x", page_range=[1])
+
+
+def test_find_pages_aggregates(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_find_pages("with-toc.pdf", "Rok isporuke", mode="exact")
+    # All 10 pages contain the same body line, so every page is a hit.
+    assert "10 pages" in out
+    # Sorted ascending by page.
+    lines = [l for l in out.splitlines() if l and not l.startswith("#") and l != "page\thits"]
+    pages_seen = []
+    for l in lines:
+        cols = l.split("\t")
+        if cols[0].isdigit():
+            pages_seen.append(int(cols[0]))
+    assert pages_seen == sorted(pages_seen)
+
+
+def test_find_pages_no_matches(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_find_pages("simple-text.pdf", "absolutelynothere", mode="exact")
+    assert "no pages match query" in out
+
+
+def test_find_pages_fuzzy_includes_top_score(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Token-reordered query — fuzzy match guaranteed against "Rok isporuke ...".
+    out = pdf_server.pdf_find_pages("with-toc.pdf", "isporuke rok", mode="fuzzy")
+    assert "top_score" in out
+
+
+def test_find_pages_limit_clamped(with_toc_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="query cannot be empty"):
+        pdf_server.pdf_find_pages("with-toc.pdf", "")

@@ -494,6 +494,78 @@ def pdf_search(
     return _to_tsv(rows, header_lines, max_chars=_TSV_MAX_CHARS)
 
 
+_FIND_PAGES_LIMIT_CAP = 100
+
+
+@mcp.tool()
+def pdf_find_pages(
+    path: str,
+    query: str,
+    mode: str = "fuzzy",
+    limit: int = _SEARCH_LIMIT_DEFAULT,
+) -> str:
+    """List pages where the query appears, with hit count and (for fuzzy) the
+    best score per page. Output is sorted by page ascending so the LLM can
+    walk the document front-to-back. Use pdf_render_page after this to look
+    at a specific page visually."""
+    if not query:
+        raise ValueError("query cannot be empty")
+    if mode not in ("exact", "fuzzy"):
+        raise ValueError(f"mode must be 'exact' or 'fuzzy', got {mode!r}")
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    outline = parsed["outline"]
+
+    by_page: dict[int, dict] = {}
+    total_hits = 0
+    for p in parsed["pages"]:
+        n = p["page"]
+        for para in _split_paragraphs(p["text"]):
+            hit, score = False, 0
+            if mode == "exact":
+                if query.casefold() in para.casefold():
+                    hit, score = True, 100
+            else:
+                score = int(fuzz.token_set_ratio(query, para))
+                if score >= _FUZZY_THRESHOLD:
+                    hit = True
+            if hit:
+                total_hits += 1
+                bucket = by_page.setdefault(
+                    n, {"hits": 0, "top_score": 0, "section": _section_for_page(outline, n)}
+                )
+                bucket["hits"] += 1
+                if score > bucket["top_score"]:
+                    bucket["top_score"] = score
+
+    clamped = max(1, min(limit, _FIND_PAGES_LIMIT_CAP))
+    sorted_pages = sorted(by_page.items())
+    shown = sorted_pages[:clamped]
+    truncated = max(0, len(sorted_pages) - clamped)
+
+    header = [
+        f"# pages with {query!r}, mode={mode}, threshold={_FUZZY_THRESHOLD}: "
+        f"{len(by_page)} pages, {total_hits} total matches"
+    ]
+    if not by_page:
+        header.append("# no pages match query")
+        return "\n".join(header)
+
+    if mode == "fuzzy":
+        rows = [["page", "section", "hits", "top_score"]]
+        for page, info in shown:
+            rows.append([page, info["section"], info["hits"], info["top_score"]])
+    else:
+        rows = [["page", "section", "hits"]]
+        for page, info in shown:
+            rows.append([page, info["section"], info["hits"]])
+
+    out = _to_tsv(rows, header, max_chars=_TSV_MAX_CHARS)
+    if truncated:
+        out += f"\n# truncated, {truncated} more pages omitted"
+    return out
+
+
 if __name__ == "__main__":
     _root()  # eager validation at startup
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
