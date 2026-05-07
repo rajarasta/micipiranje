@@ -193,8 +193,8 @@ def build_croatian() -> None:
         start=1,
     ):
         page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), f"Stranica {i}", fontsize=14, fontfile=DEJAVU)
-        page.insert_text((50, 140), body, fontsize=11, fontfile=DEJAVU)
+        page.insert_text((50, 100), f"Stranica {i}", fontsize=14, fontfile=DEJAVU, fontname="dejavu")
+        page.insert_text((50, 140), body, fontsize=11, fontfile=DEJAVU, fontname="dejavu")
     _save(doc, "croatian.pdf")
 
 
