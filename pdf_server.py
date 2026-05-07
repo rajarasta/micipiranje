@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF
 import pdfplumber
+from rapidfuzz import fuzz
 
 from mcp.server.fastmcp import FastMCP
 
@@ -390,6 +392,106 @@ def pdf_overview(path: str) -> str:
         lines.append("# no TOC bookmarks; use pdf_search to locate sections")
 
     return "\n".join(lines)
+
+
+_PARAGRAPH_SPLIT = re.compile(r"\n\s*\n+")
+_FUZZY_THRESHOLD = 60
+_SEARCH_LIMIT_DEFAULT = 20
+_TSV_MAX_CHARS = 50000
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    parts = _PARAGRAPH_SPLIT.split(text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _section_for_page(outline: list[dict], page: int) -> str:
+    """Return the title of the latest TOC entry whose page <= the given page."""
+    best = ""
+    for entry in outline:
+        if entry["page"] <= page:
+            best = entry["title"]
+        else:
+            break
+    return best
+
+
+def _check_page_range(page_range, total: int) -> tuple[int, int]:
+    if page_range is None:
+        return 1, total
+    if not isinstance(page_range, (list, tuple)) or len(page_range) != 2:
+        raise ValueError("page_range must be a 2-element list [start, end]")
+    s, e = int(page_range[0]), int(page_range[1])
+    return max(1, s), min(total, e)
+
+
+@mcp.tool()
+def pdf_search(
+    path: str,
+    query: str,
+    mode: str = "fuzzy",
+    limit: int = _SEARCH_LIMIT_DEFAULT,
+    page_range: list[int] | None = None,
+) -> str:
+    """Search PDF text at paragraph granularity.
+
+    mode='exact' is case-insensitive substring; mode='fuzzy' uses
+    rapidfuzz.token_set_ratio with score >= 60. page_range=[start, end]
+    optionally narrows the search (1-based, inclusive). Returns top `limit`
+    paragraphs as TSV with page, section and paragraph columns; fuzzy mode
+    prepends a score column."""
+    if not query:
+        raise ValueError("query cannot be empty")
+    if mode not in ("exact", "fuzzy"):
+        raise ValueError(f"mode must be 'exact' or 'fuzzy', got {mode!r}")
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    total = parsed["meta"]["page_count"]
+    p_lo, p_hi = _check_page_range(page_range, total)
+
+    candidates: list[tuple[int, str, str, int]] = []  # (page, section, paragraph, score)
+    outline = parsed["outline"]
+    for p in parsed["pages"]:
+        n = p["page"]
+        if n < p_lo or n > p_hi:
+            continue
+        section = _section_for_page(outline, n)
+        for para in _split_paragraphs(p["text"]):
+            if mode == "exact":
+                if query.casefold() in para.casefold():
+                    candidates.append((n, section, para, 100))
+            else:
+                score = int(fuzz.token_set_ratio(query, para))
+                if score >= _FUZZY_THRESHOLD:
+                    candidates.append((n, section, para, score))
+
+    if mode == "fuzzy":
+        candidates.sort(key=lambda r: r[3], reverse=True)
+    # exact mode: keep document order
+
+    total_matches = len(candidates)
+    top = candidates[:limit]
+
+    range_note = ""
+    if page_range is not None:
+        range_note = f", page_range=[{p_lo}, {p_hi}]"
+    header_lines = [
+        f"# search {query!r}, mode={mode}, threshold={_FUZZY_THRESHOLD}{range_note}, "
+        f"showing {len(top)} of {total_matches} matches"
+    ]
+    if total_matches == 0:
+        header_lines.append("# no matches")
+        return "\n".join(header_lines)
+
+    if mode == "fuzzy":
+        rows = [["score", "page", "section", "paragraph"]]
+        for page, section, para, score in top:
+            rows.append([score, page, section, para])
+    else:
+        rows = [["page", "section", "paragraph"]]
+        for page, section, para, _ in top:
+            rows.append([page, section, para])
+    return _to_tsv(rows, header_lines, max_chars=_TSV_MAX_CHARS)
 
 
 if __name__ == "__main__":

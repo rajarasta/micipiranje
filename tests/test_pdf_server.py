@@ -419,3 +419,83 @@ def test_read_pages_marks_ocr_and_empty(scanned_pdf, monkeypatch):
     out = pdf_server.pdf_read_pages("scanned-page.pdf", start=1, count=3)
     # Page 2 is image-only without OCR available → marked (no text).
     assert "# page 2 of 3 (no text)" in out
+
+
+def test_search_exact_finds_paragraph(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_search("with-toc.pdf", "Rok isporuke", mode="exact")
+    assert "mode=exact" in out
+    assert "Rok isporuke" in out
+    # Header section column should resolve via TOC.
+    assert "score" not in out  # exact mode: no score column
+    assert "page" in out
+
+
+def test_search_fuzzy_returns_score(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Token-reordered query: rapidfuzz.token_set_ratio is order-insensitive,
+    # so "isporuke rok" still matches the "Rok isporuke je 30 dana ..." line
+    # with score 100 — the assertion confirms fuzzy mode renders a score column.
+    out = pdf_server.pdf_search("with-toc.pdf", "isporuke rok", mode="fuzzy")
+    assert "mode=fuzzy" in out
+    assert "score" in out
+    assert "Rok isporuke" in out
+
+
+def test_search_no_match(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_search("simple-text.pdf", "thisstringdoesnotexist", mode="exact")
+    assert "no matches" in out
+
+
+def test_search_empty_query_raises(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="query cannot be empty"):
+        pdf_server.pdf_search("simple-text.pdf", "")
+
+
+def test_search_invalid_mode_raises(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="mode must be"):
+        pdf_server.pdf_search("simple-text.pdf", "x", mode="bogus")
+
+
+def test_search_page_range_filters(with_toc_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_search(
+        "with-toc.pdf", "ovu sekciju", mode="exact", page_range=[1, 3]
+    )
+    # Pages 1..3 should hit, page 6+ must not show up.
+    assert "ovu sekciju" in out
+    # No row should reference a page outside [1, 3].
+    for line in out.splitlines():
+        if line.startswith("#") or line.startswith("page") or not line.strip():
+            continue
+        cols = line.split("\t")
+        # Columns: page, section, paragraph (exact mode, no score).
+        page_col = cols[0]
+        if page_col.isdigit():
+            assert 1 <= int(page_col) <= 3
+
+
+def test_search_page_range_invalid_shape(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="2-element list"):
+        pdf_server.pdf_search("simple-text.pdf", "x", page_range=[1])
