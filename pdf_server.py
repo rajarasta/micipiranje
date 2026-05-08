@@ -88,6 +88,20 @@ def _render_cache_path(target: Path, page: int, dpi: int) -> Path:
     return _renders_dir() / f"{key}__p{page}__dpi{dpi}.png"
 
 
+def _points_to_pixels(rect, dpi: int) -> tuple[int, int, int, int]:
+    """Convert a PyMuPDF (PDF points) bbox to pixel coords at the given DPI.
+
+    rect can be a fitz.Rect or a 4-tuple/list (x0, y0, x1, y1) in points.
+    PDF points are 1/72 inch — pixels = points * dpi / 72.
+    """
+    if isinstance(rect, fitz.Rect):
+        x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+    else:
+        x0, y0, x1, y1 = rect
+    s = dpi / 72.0
+    return (round(x0 * s), round(y0 * s), round(x1 * s), round(y1 * s))
+
+
 def _read_cache(target: Path) -> dict | None:
     if _cache_disabled():
         return None
@@ -754,6 +768,79 @@ def pdf_render_page(path: str, page: int, dpi: int = _DPI_DEFAULT) -> list:
             mimeType="image/png",
         ),
     ]
+
+
+@mcp.tool()
+def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
+    """List detectable regions on a PDF page with their bounding boxes.
+
+    Returns TSV with columns: index, type, x0, y0, x1, y1, hint. type is one
+    of 'text', 'image', 'drawing'. Bounding boxes are in pixels at the given
+    DPI — same coordinate system pdf_extract_region expects, and matching the
+    DPI you rendered the page at via pdf_render_page. Use this when you want
+    to crop a known region (e.g. 'extract block 3') without eyeballing pixel
+    coordinates from a render."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    total = parsed["meta"]["page_count"]
+    if not (1 <= page <= total):
+        raise ValueError(f"page must be in range [1, {total}]")
+    if not (_DPI_MIN <= dpi <= _DPI_MAX):
+        raise ValueError(f"dpi must be between {_DPI_MIN} and {_DPI_MAX}")
+
+    rows: list[list] = [["index", "type", "x0", "y0", "x1", "y1", "hint"]]
+    idx = 0
+    with fitz.open(target) as doc:
+        p = doc.load_page(page - 1)
+
+        # Text + image blocks via get_text("blocks").
+        # Each tuple: (x0, y0, x1, y1, text, block_no, block_type) where
+        # block_type 0=text, 1=image.
+        for x0, y0, x1, y1, content, _bno, btype in p.get_text("blocks") or []:
+            kind = "text" if btype == 0 else "image"
+            if kind == "text":
+                hint = (content or "").strip().replace("\n", " ").replace("\t", " ")[:60]
+            else:
+                hint = ""
+            px = _points_to_pixels((x0, y0, x1, y1), dpi)
+            rows.append([idx, kind, *px, hint])
+            idx += 1
+
+        # Embedded raster images that may not have surfaced via "blocks".
+        # Dedupe by pixel bbox so we don't double-count.
+        seen_image_rects: set[tuple] = set()
+        for r in rows[1:]:
+            if r[1] == "image":
+                seen_image_rects.add(tuple(r[2:6]))
+        for info in p.get_image_info(xrefs=True) or []:
+            bbox_pt = info.get("bbox")
+            if not bbox_pt:
+                continue
+            bbox_px = _points_to_pixels(bbox_pt, dpi)
+            if bbox_px in seen_image_rects:
+                continue
+            w, h = info.get("width", 0), info.get("height", 0)
+            rows.append([idx, "image", *bbox_px, f"{w}×{h}"])
+            idx += 1
+
+        # Vector drawings: lines, rects, paths (table borders, charts, etc.)
+        for d in p.get_drawings() or []:
+            rect = d.get("rect")
+            if rect is None:
+                continue
+            n_items = len(d.get("items") or [])
+            rows.append([idx, "drawing", *_points_to_pixels(rect, dpi),
+                         f"{n_items} shapes"])
+            idx += 1
+
+    header = [
+        f"# layout for page {page} of {total}, bbox in pixels @ {dpi} dpi",
+        f"# {len(rows) - 1} regions detected",
+    ]
+    if len(rows) == 1:
+        header.append("# no regions detected on this page")
+        return "\n".join(header)
+    return _to_tsv(rows, header, max_chars=_TSV_MAX_CHARS)
 
 
 if __name__ == "__main__":

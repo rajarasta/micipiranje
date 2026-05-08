@@ -719,3 +719,59 @@ def test_smoke_full_pipeline(with_toc_pdf, with_tables_pdf, simple_text_pdf):
     render_out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
     assert any(isinstance(c, TextContent) for c in render_out)
     assert any(isinstance(c, ImageContent) for c in render_out)
+
+
+def test_inspect_layout_text_blocks(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_inspect_layout("simple-text.pdf", page=1)
+    # At least 1 text block on page 1; the hint must mention the fixture text.
+    assert "# layout for page 1 of 5" in out
+    assert "regions detected" in out
+    text_lines = [l for l in out.splitlines() if "\ttext\t" in l]
+    assert len(text_lines) >= 1
+    assert any("Page 1 of simple text fixture" in l for l in text_lines)
+
+
+def test_inspect_layout_drawings(with_tables_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_inspect_layout("with-tables.pdf", page=1)
+    # The table on page 1 is drawn with explicit rectangles + lines, so at
+    # least one "drawing" type row must appear.
+    drawing_lines = [l for l in out.splitlines() if "\tdrawing\t" in l]
+    assert len(drawing_lines) >= 1
+
+
+def test_inspect_layout_image_block(scanned_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # scanned-page.pdf has an image-only middle page (page 2).
+    out = pdf_server.pdf_inspect_layout("scanned-page.pdf", page=2)
+    image_lines = [l for l in out.splitlines() if "\timage\t" in l]
+    assert len(image_lines) >= 1
+
+
+def test_inspect_layout_invalid_page(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="page must be in range"):
+        pdf_server.pdf_inspect_layout("simple-text.pdf", page=99)
+    with pytest.raises(ValueError, match="page must be in range"):
+        pdf_server.pdf_inspect_layout("simple-text.pdf", page=0)
+
+
+def test_inspect_layout_invalid_dpi(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="dpi must be between"):
+        pdf_server.pdf_inspect_layout("simple-text.pdf", page=1, dpi=10)
+    with pytest.raises(ValueError, match="dpi must be between"):
+        pdf_server.pdf_inspect_layout("simple-text.pdf", page=1, dpi=999)
