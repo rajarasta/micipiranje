@@ -149,7 +149,7 @@ Nužan jer:
 
 ## 6. Tool API
 
-Sedam alata, svi read-only. Svi prihvaćaju `path` kao prvi argument (relativan na sandbox root).
+Devet alata. Sedam je read-only inspekcija; `pdf_extract_region` piše PNG izlaz u sandbox (jedini koji namjerno modificira sandbox state). Svi prihvaćaju `path` kao prvi argument (relativan na sandbox root).
 
 Stranice su **1-based** kroz cijeli API (kako PDF stranice ljudi pišu). Ovo se razlikuje od xlsx-a koji ima 0-based redove jer ima header.
 
@@ -162,6 +162,8 @@ Stranice su **1-based** kroz cijeli API (kako PDF stranice ljudi pišu). Ovo se 
 | `pdf_extract_tables` | Ekstrakcija tablica kao TSV |
 | `pdf_find_pages` | Concise popis stranica + broj matcheva |
 | `pdf_render_page` | Render stranice kao PNG za vision modele |
+| `pdf_inspect_layout` | Popis text/image/drawing regija s bbox-ovima u pikselima @ DPI |
+| `pdf_extract_region` | Crop bbox-a kao PNG, sprema u sandbox, vraća inline sliku |
 
 ### 6.1 `pdf_overview(path)`
 
@@ -319,6 +321,98 @@ LM Studio MCP klijent koji prepozna `ImageContent` automatski proslijedi sliku v
 
 Generiraj PNG u memoriji, vrati ga, ne piši na disk.
 
+### 6.8 `pdf_inspect_layout(path, page, dpi=150)`
+
+Vraća TSV popis svega što PyMuPDF detektira na stranici: text-blokove, embedded slike, vector drawings. Ulaz vision-driven workflow-a kad LLM ne želi piksel-eyeballing — bira "blok 5" po indeksu iz TSV-a.
+
+**Argumenti:**
+
+- `page` — 1-based; isti raspon kao `pdf_render_page`.
+- `dpi` — DPI u kojem se vraćaju bbox koordinate (pikseli @ DPI). Default **150**, range `[72, 300]`. Mora biti isti DPI kojeg koristiš kasnije u `pdf_extract_region`.
+
+**Output (TSV):**
+
+```text
+# layout for page 1 of 3, bbox in pixels @ 150 dpi
+# 6 regions detected
+index   type      x0    y0    x1     y1     hint
+0       text      104   125   492    267    Tablica 1: cjenik artikala
+1       drawing   104   166   791    270    44 shapes
+2       text      104   312   492    458    Vijak M8x40 inox 500 kom 0.45
+...
+```
+
+- `type` ∈ {`text`, `image`, `drawing`}.
+- `hint`:
+  - **text:** prvih 60 znakova teksta (newline → space, tab → space).
+  - **image:** dimenzije embeded slike u izvornim pikselima `<w>×<h>`.
+  - **drawing:** broj path shapes (`<n> shapes`) — često se grupiraju (npr. cijela tablica je 1 drawing s mnogo linija).
+- Nijedan output ne uključuje sirovi puni tekst bloka — to je u `pdf_read_pages` / `pdf_search`.
+
+**Implementacija:**
+
+- `page.get_text("blocks")` — daje text + image blokove s `block_type` 0/1.
+- `page.get_image_info(xrefs=True)` — embed-images koji ne dolaze kroz "blocks" (rijetko, ali postoji); deduplicirano po pixel bbox-u.
+- `page.get_drawings()` — vector path-ovi.
+- Helper `_points_to_pixels(rect, dpi)` konvertira PyMuPDF native (PDF točke) u pixele @ DPI.
+
+### 6.9 `pdf_extract_region(path, page, bbox, dpi=150, save_as=None)`
+
+Crop pravokutne regije stranice kao PNG, sprema unutar sandboxa, vraća inline kao multipart. Glavni write-tool servera.
+
+**Argumenti:**
+
+- `bbox: list[int]` — točno 4 elementa `[x0, y0, x1, y1]` u **pikselima @ specificiranom DPI-u**. Isti koordinatni sustav kao output `pdf_inspect_layout` i isti DPI kao `pdf_render_page`.
+- `dpi` — default **150**, range `[72, 300]`. Mora se podudarati s DPI-em rendera kojeg je vision model vidio.
+- `save_as: str | None` — relativni sandbox path s ekstenzijom `.png`. Parent direktoriji se auto-kreiraju. Ako `None`, sprema se u `.lm-pdf-cache/extracts/<basename>__<size>__<mtime_ns>__p<N>__bbox<x0>_<y0>_<x1>_<y1>__dpi<D>.png`.
+
+**Validacija:**
+
+- Page izvan range-a → `ValueError("page must be in range [1, N]")`.
+- DPI van `[72, 300]` → `ValueError("dpi must be between 72 and 300")`.
+- bbox krive duljine → `ValueError("bbox must be a 4-element list ...")`.
+- bbox s negativnim koordinatama → `ValueError("bbox has negative coordinates: ...")`.
+- bbox prazan ili invertiran (`x0 ≥ x1` ili `y0 ≥ y1`) → `ValueError("bbox is empty or inverted: ...")`.
+- bbox prelazi rub stranice → `ValueError("bbox extends past page bounds at <D> dpi: page is W×H px")`.
+- `save_as` bez `.png` ekstenzije → `ValueError("save_as must end with .png")`.
+- `save_as` izvan sandboxa → `ValueError("path escapes sandbox root: ...")` (kroz postojeći `_safe`).
+
+**Implementacija:**
+
+```python
+scale = 72.0 / dpi
+clip = fitz.Rect(x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+pix = page.get_pixmap(dpi=dpi, clip=clip)
+png_bytes = pix.tobytes("png")
+```
+
+PyMuPDF interno renderira samo clip dio stranice → output dimenzije su točno `(x1-x0) × (y1-y0)` piksela @ DPI.
+
+**Return type — multipart MCP response (kao `pdf_render_page`):**
+
+1. `TextContent` — metadata header:
+
+   ```text
+   # region from page 5 of 47 @ 150 dpi
+   # bbox=[820, 1500, 1100, 1600] (280×100 px, 14 KB)
+   # saved to: reports/signature_p5.png
+   ```
+
+2. `ImageContent` — base64 PNG, `mimeType="image/png"`.
+
+**`LM_PDF_NO_CACHE=1` ne utječe** na ovaj tool — spremanje je *namjeran* output korisnika, ne cache. PNG se uvijek piše na disk.
+
+**Workflow:**
+
+```text
+pdf_render_page(p, page=5)         → vision model vidi stranicu
+pdf_inspect_layout(p, page=5)      → model dobiva popis bloka s pixel bboxovima
+pdf_extract_region(p, page=5,      → crop + save
+  bbox=[820, 1500, 1100, 1600],
+  save_as="reports/signature.png")
+lm-fs.write_file(...)              → markdown report koji embed-a sliku
+```
+
 ## 7. Output format
 
 Sve vraća **TSV ili plain text s `# ...` metadata headerom** (isti pattern kao xlsx). Razlozi:
@@ -425,7 +519,7 @@ Sukladno postojećem dual-frontend setupu (LM Studio + llama.cpp WebUI), `lm-pdf
 - Pisanje / mijenjanje PDF-a (read-only).
 - Encrypted PDF-ovi (password handling).
 - PDF forms (fillable form fields) — option E iz prve faze brainstorminga, eksplicitno odbačeno.
-- **Ekstrakcija individualnih slika/figura iz stranice** (cropped figures sa caption-om). `pdf_render_page` renderira **cijelu stranicu**; ako vision model treba pojedinu sliku, korisnik to dobiva uz cijeli kontekst stranice.
+- **Auto-detekcija i ekstrakcija figura sa caption-om** — `pdf_extract_region` traži *bbox-driven* crop (LLM ili korisnik specificira pravokutnik); ne radimo automatsko prepoznavanje "ovo je figura, ovo je njen caption" pomoću layout-AI modela.
 - Render više stranica u jednom pozivu — namjerno ograničeno na 1 stranicu po `pdf_render_page`.
 - Cross-document search / kompariranje više PDF-ova.
 - Math / equations — koristio bi marker-pdf umjesto našeg pristupa.
@@ -433,7 +527,7 @@ Sukladno postojećem dual-frontend setupu (LM Studio + llama.cpp WebUI), `lm-pdf
 - Komparacija s xlsx-om / cross-tool join.
 - AI parser-i (docling, marker-pdf) — odbačeni u korist lakšeg toolchaina.
 
-Ako neka od ovih stavki zatreba u budućnosti, dodaje se kao zaseban alat — ne diramo postojećih 7.
+Ako neka od ovih stavki zatreba u budućnosti, dodaje se kao zaseban alat — ne diramo postojećih 9.
 
 ## 12. Test plan (skica)
 

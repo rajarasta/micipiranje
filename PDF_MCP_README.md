@@ -15,8 +15,19 @@ See the design spec for full details: [docs/superpowers/specs/2026-05-07-pdf-mcp
 | `pdf_extract_tables(path, page=None)` | Tables as TSV; per-page or whole-doc |
 | `pdf_find_pages(path, query, mode="fuzzy", limit=20)` | Aggregated page list with hit counts (sorted by page) |
 | `pdf_render_page(path, page, dpi=150)` | Render a single page as PNG; returns inline image to vision models |
+| `pdf_inspect_layout(path, page, dpi=150)` | List detected regions (text/image/drawing) with pixel bboxes |
+| `pdf_extract_region(path, page, bbox, dpi=150, save_as=None)` | Crop a region as PNG, save to sandbox, return inline image |
 
-All text output is TSV with `# ...` metadata headers, capped at ~50k characters with a `# truncated` marker. `pdf_render_page` is the only tool that returns multipart content (text + image).
+All text output is TSV with `# ...` metadata headers, capped at ~50k characters with a `# truncated` marker. `pdf_render_page` and `pdf_extract_region` return multipart content (text + image).
+
+## Use case: report with cropped images
+
+Vision-model workflow for an analyst building a report from a contract or technical spec:
+
+1. `pdf_render_page(path, page=N, dpi=150)` — vision model sees the full page.
+2. `pdf_inspect_layout(path, page=N, dpi=150)` — model gets the list of text blocks, embedded images, and vector drawings with bboxes (same coordinate system as the render).
+3. `pdf_extract_region(path, page=N, bbox=[x0, y0, x1, y1], dpi=150, save_as="reports/signature_p5.png")` — crops the chosen region, saves it inside the sandbox.
+4. Use `lm-fs` to write a markdown report that references the saved PNG path. The cropped images live in the same sandbox so any other tool can pick them up.
 
 ## Install in LM Studio
 
