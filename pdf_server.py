@@ -74,6 +74,12 @@ def _renders_dir() -> Path:
     return d
 
 
+def _extracts_dir() -> Path:
+    d = _cache_dir() / "extracts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _cache_key(target: Path) -> str:
     st = target.stat()
     return f"{target.name}__{st.st_size}__{st.st_mtime_ns}"
@@ -841,6 +847,93 @@ def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
         header.append("# no regions detected on this page")
         return "\n".join(header)
     return _to_tsv(rows, header, max_chars=_TSV_MAX_CHARS)
+
+
+@mcp.tool()
+def pdf_extract_region(
+    path: str,
+    page: int,
+    bbox: list[int],
+    dpi: int = _DPI_DEFAULT,
+    save_as: str | None = None,
+) -> list:
+    """Crop a rectangular region of a PDF page as PNG, save it inside the
+    sandbox, and return it inline.
+
+    bbox is [x0, y0, x1, y1] in pixels at the given DPI — the same coordinate
+    system pdf_inspect_layout returns and the same DPI you rendered the page
+    at via pdf_render_page. save_as is a relative sandbox path ending in .png
+    (parent dirs auto-created); if omitted, the PNG is auto-saved under
+    .lm-pdf-cache/extracts/. Returns multipart [TextContent (metadata + saved
+    path), ImageContent (PNG)]."""
+    target = _open_target(path)
+    parsed = _get_parsed(target)
+    total = parsed["meta"]["page_count"]
+    if not (1 <= page <= total):
+        raise ValueError(f"page must be in range [1, {total}]")
+    if not (_DPI_MIN <= dpi <= _DPI_MAX):
+        raise ValueError(f"dpi must be between {_DPI_MIN} and {_DPI_MAX}")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        raise ValueError("bbox must be a 4-element list [x0, y0, x1, y1]")
+    x0, y0, x1, y1 = (int(v) for v in bbox)
+    if x0 < 0 or y0 < 0:
+        raise ValueError(f"bbox has negative coordinates: {bbox}")
+    if x0 >= x1 or y0 >= y1:
+        raise ValueError(f"bbox is empty or inverted: {bbox}")
+
+    # Pixel bbox @ dpi → PDF points for fitz.Rect clip.
+    scale = 72.0 / dpi
+    clip = fitz.Rect(x0 * scale, y0 * scale, x1 * scale, y1 * scale)
+
+    with fitz.open(target) as doc:
+        p = doc.load_page(page - 1)
+        page_rect = p.rect  # in points
+        # Allow 1-point slack for floating-point rounding at the page edge.
+        if clip.x1 > page_rect.width + 1 or clip.y1 > page_rect.height + 1:
+            page_w_px = int(page_rect.width * dpi / 72)
+            page_h_px = int(page_rect.height * dpi / 72)
+            raise ValueError(
+                f"bbox extends past page bounds at {dpi} dpi: "
+                f"page is {page_w_px}×{page_h_px} px"
+            )
+        pix = p.get_pixmap(dpi=dpi, clip=clip)
+        png_bytes = pix.tobytes("png")
+
+    # Resolve save destination.
+    if save_as is not None:
+        if not save_as.lower().endswith(".png"):
+            raise ValueError("save_as must end with .png")
+        out_path = _safe(save_as)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(png_bytes)
+        save_note = f"# saved to: {out_path.relative_to(_root())}"
+    else:
+        extracts = _extracts_dir()
+        auto_name = (
+            f"{_cache_key(target)}__p{page}"
+            f"__bbox{x0}_{y0}_{x1}_{y1}__dpi{dpi}.png"
+        )
+        out_path = extracts / auto_name
+        out_path.write_bytes(png_bytes)
+        save_note = f"# auto-saved to: {out_path.relative_to(_root())}"
+
+    # PNG IHDR: width [16:20], height [20:24], big-endian.
+    width = int.from_bytes(png_bytes[16:20], "big")
+    height = int.from_bytes(png_bytes[20:24], "big")
+    size_kb = len(png_bytes) // 1024
+    text = "\n".join([
+        f"# region from page {page} of {total} @ {dpi} dpi",
+        f"# bbox=[{x0}, {y0}, {x1}, {y1}] ({width}×{height} px, {size_kb} KB)",
+        save_note,
+    ])
+    return [
+        TextContent(type="text", text=text),
+        ImageContent(
+            type="image",
+            data=base64.b64encode(png_bytes).decode("ascii"),
+            mimeType="image/png",
+        ),
+    ]
 
 
 if __name__ == "__main__":

@@ -775,3 +775,128 @@ def test_inspect_layout_invalid_dpi(simple_text_pdf):
         pdf_server.pdf_inspect_layout("simple-text.pdf", page=1, dpi=10)
     with pytest.raises(ValueError, match="dpi must be between"):
         pdf_server.pdf_inspect_layout("simple-text.pdf", page=1, dpi=999)
+
+
+def test_extract_region_default_save(simple_text_pdf):
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300], dpi=150
+    )
+    # Multipart: one TextContent + one ImageContent.
+    assert any(isinstance(c, TextContent) for c in out)
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(image_items) == 1
+    assert image_items[0].mimeType == "image/png"
+    # PNG signature in base64 starts with iVBORw0KGgo.
+    assert image_items[0].data.startswith("iVBORw0KGgo")
+    # Auto-saved file exists in extracts/ with the PNG signature.
+    extracts = pdf_server._extracts_dir()
+    matching = list(extracts.glob("*__p1__bbox100_100_300_300__dpi150.png"))
+    assert len(matching) == 1
+    assert matching[0].read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_extract_region_custom_save_as(simple_text_pdf, sandbox):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300],
+        dpi=150, save_as="reports/sig.png",
+    )
+    saved = sandbox / "reports" / "sig.png"
+    assert saved.exists()
+    assert saved.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_extract_region_save_as_escapes_sandbox(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="escapes sandbox root"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[100, 100, 300, 300],
+            save_as="../escape.png",
+        )
+
+
+def test_extract_region_save_as_wrong_extension(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="must end with .png"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[100, 100, 300, 300],
+            save_as="x.jpg",
+        )
+
+
+def test_extract_region_invalid_bbox(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Wrong shape.
+    with pytest.raises(ValueError, match="4-element list"):
+        pdf_server.pdf_extract_region("simple-text.pdf", page=1, bbox=[1, 2, 3])
+    # Inverted (x0 >= x1).
+    with pytest.raises(ValueError, match="empty or inverted"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[300, 100, 100, 300]
+        )
+    # Negative coordinate.
+    with pytest.raises(ValueError, match="negative coordinates"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[-10, 100, 200, 300]
+        )
+
+
+def test_extract_region_bbox_past_page(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    # A4 @ 150 dpi ≈ 1240×1754 px; 5000 px is well past the right edge.
+    with pytest.raises(ValueError, match="extends past page bounds"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[100, 100, 5000, 300], dpi=150
+        )
+
+
+def test_extract_region_invalid_page_or_dpi(simple_text_pdf):
+    import importlib
+    import pytest
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="page must be in range"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=99, bbox=[10, 10, 100, 100]
+        )
+    with pytest.raises(ValueError, match="dpi must be between"):
+        pdf_server.pdf_extract_region(
+            "simple-text.pdf", page=1, bbox=[10, 10, 100, 100], dpi=10
+        )
+
+
+def test_extract_region_inline_image_dimensions(simple_text_pdf):
+    """A 200×200 px bbox @ 150 dpi must produce a ~200×200 px PNG."""
+    import importlib
+    import base64
+    from mcp.types import ImageContent
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300], dpi=150
+    )
+    img = next(c for c in out if isinstance(c, ImageContent))
+    png = base64.b64decode(img.data)
+    width = int.from_bytes(png[16:20], "big")
+    height = int.from_bytes(png[20:24], "big")
+    # Allow ±2 px slack for PyMuPDF rounding behavior at clip edges.
+    assert 198 <= width <= 202
+    assert 198 <= height <= 202
