@@ -1,0 +1,10 @@
+body {
+  width: 400px;
+  height: 600px;
+  margin: 0;
+  font-family: -moz-system-ui, system-ui, sans-serif;
+  font-size: 14px;
+}
+#app {
+  padding: 12px;
+}
