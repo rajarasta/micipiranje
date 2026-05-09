@@ -77,12 +77,12 @@ function escapeHtml(str) {
 }
 
 async function openEditor(id) {
-  state.currentNoteId = id;
   const note = await getNote(state.db, id);
   if (!note) {
     showList();
     return;
   }
+  state.currentNoteId = id;
   $('#editor-title').value = note.title;
   $('#editor-body').value = note.body;
   $('#view-list').classList.add('hidden');
@@ -98,6 +98,15 @@ function rebindEditorEvents() {
   title.oninput = null;
   title.onblur = onTitleBlur;
   body.oninput = onBodyInput;
+}
+
+function unbindEditorEvents() {
+  $('#editor-title').onblur = null;
+  $('#editor-body').oninput = null;
+  if (bodyDebounceTimer) {
+    clearTimeout(bodyDebounceTimer);
+    bodyDebounceTimer = null;
+  }
 }
 
 async function onTitleBlur() {
@@ -136,40 +145,42 @@ function renderAttachments(note) {
   const ul = $('#attachment-list');
   ul.innerHTML = '';
   for (const attId of note.attachmentIds) {
-    renderAttachmentRow(attId).catch(err => console.error('[notes] att render', err));
+    const placeholder = document.createElement('li');
+    placeholder.className = 'att-item';
+    placeholder.dataset.id = attId;
+    ul.appendChild(placeholder);
+    renderAttachmentRow(attId, placeholder).catch(err => console.error('[notes] att render', err));
   }
 }
 
-async function renderAttachmentRow(attId) {
+async function renderAttachmentRow(attId, li) {
   const att = await getAttachment(state.db, attId);
-  const li = document.createElement('li');
-  li.className = 'att-item';
-  li.dataset.id = attId;
 
   if (!att) {
     li.innerHTML = `<span class="thumb">⚠</span><span class="name">privitak nedostaje</span><button type="button">✕</button>`;
-  } else {
-    const url = URL.createObjectURL(att.blob);
-    objectUrls.set(attId, url);
-    const img = document.createElement('img');
-    img.className = 'thumb';
-    img.alt = '';
-    img.src = url;
-    img.onerror = () => { img.replaceWith(document.createTextNode('⚠')); };
-    img.addEventListener('click', () => openModal(url));
-
-    const name = document.createElement('span');
-    name.className = 'name';
-    name.textContent = `${att.filename} (${formatSize(att.size)})`;
-
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = '✕';
-    btn.addEventListener('click', () => removeAttachmentClick(attId));
-
-    li.append(img, name, btn);
+    li.querySelector('button').addEventListener('click', () => removeAttachmentClick(attId));
+    return;
   }
-  $('#attachment-list').appendChild(li);
+
+  const url = URL.createObjectURL(att.blob);
+  objectUrls.set(attId, url);
+  const img = document.createElement('img');
+  img.className = 'thumb';
+  img.alt = '';
+  img.src = url;
+  img.onerror = () => { img.replaceWith(document.createTextNode('⚠')); };
+  img.addEventListener('click', () => openModal(url));
+
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = `${att.filename} (${formatSize(att.size)})`;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = '✕';
+  btn.addEventListener('click', () => removeAttachmentClick(attId));
+
+  li.append(img, name, btn);
 }
 
 async function removeAttachmentClick(attId) {
@@ -204,7 +215,8 @@ function bindPasteHandler() {
 }
 
 async function onPaste(e) {
-  if (!state.currentNoteId) return;
+  const noteId = state.currentNoteId;
+  if (!noteId) return;
   const result = parsePaste(e);
   if (!result) return;
 
@@ -214,9 +226,10 @@ async function onPaste(e) {
   }
 
   try {
-    const att = await addAttachment(state.db, state.currentNoteId, result.blob, result.mimeType, result.filename);
+    const att = await addAttachment(state.db, noteId, result.blob, result.mimeType, result.filename);
     showToast(`Slika dodana (${formatSize(att.size)})`);
-    const note = await getNote(state.db, state.currentNoteId);
+    if (state.currentNoteId !== noteId) return;
+    const note = await getNote(state.db, noteId);
     if (note) renderAttachments(note);
   } catch (err) {
     console.error('[notes] addAttachment failed', err);
@@ -241,6 +254,7 @@ function showToast(message, kind = 'info') {
 async function onDeleteNoteClick() {
   if (!state.currentNoteId) return;
   if (!confirm('Obrisati ovu bilješku i sve privitke?')) return;
+  unbindEditorEvents();
   await deleteNote(state.db, state.currentNoteId);
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
@@ -251,6 +265,7 @@ async function onDeleteNoteClick() {
 }
 
 async function showList() {
+  unbindEditorEvents();
   await flushAndPrune();
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
