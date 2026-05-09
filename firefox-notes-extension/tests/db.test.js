@@ -1,4 +1,10 @@
-import { openDb, DB_NAME, DB_VERSION } from '../lib/db.js';
+import { openDb, DB_NAME, DB_VERSION, put, get, del } from '../lib/db.js';
+
+// jsdom in Node 18 hides structuredClone, which fake-indexeddb requires when
+// cloning records on put(). Plain-object fixtures here are JSON-safe.
+if (typeof globalThis.structuredClone !== 'function') {
+  globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+}
 
 beforeEach(() => {
   return new Promise((resolve, reject) => {
@@ -20,6 +26,32 @@ describe('openDb', () => {
     const store = tx.objectStore('notes');
     expect(Array.from(store.indexNames)).toContain('updatedAt');
 
+    db.close();
+  });
+});
+
+describe('put / get / del', () => {
+  test('put then get returns the same record', async () => {
+    const db = await openDb();
+    await put(db, 'notes', { id: 'n1', title: 'hi', body: '', attachmentIds: [], createdAt: 1, updatedAt: 1 });
+    const got = await get(db, 'notes', 'n1');
+    expect(got).toEqual({ id: 'n1', title: 'hi', body: '', attachmentIds: [], createdAt: 1, updatedAt: 1 });
+    db.close();
+  });
+
+  test('get returns undefined for missing id', async () => {
+    const db = await openDb();
+    const got = await get(db, 'notes', 'missing');
+    expect(got).toBeUndefined();
+    db.close();
+  });
+
+  test('del removes the record', async () => {
+    const db = await openDb();
+    await put(db, 'notes', { id: 'n1', title: 'x', body: '', attachmentIds: [], createdAt: 1, updatedAt: 1 });
+    await del(db, 'notes', 'n1');
+    const got = await get(db, 'notes', 'n1');
+    expect(got).toBeUndefined();
     db.close();
   });
 });
