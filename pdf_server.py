@@ -938,7 +938,15 @@ def pdf_render_page(path: str, page: int, dpi: int = _DPI_DEFAULT) -> list:
 
 
 @mcp.tool()
-def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
+def pdf_inspect_layout(
+    path: str,
+    page: int,
+    dpi: int = _DPI_DEFAULT,
+    cluster_tolerance: int = 8,
+    min_area: int = 100,
+    max_drawings: int = 20,
+    verbose: bool = False,
+) -> str:
     """List detectable regions on a PDF page with their bounding boxes.
 
     Returns TSV with columns: index, type, x0, y0, x1, y1, hint. type is one
@@ -946,7 +954,14 @@ def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
     DPI — same coordinate system pdf_extract_region expects, and matching the
     DPI you rendered the page at via pdf_render_page. Use this when you want
     to crop a known region (e.g. 'extract block 3') without eyeballing pixel
-    coordinates from a render."""
+    coordinates from a render.
+
+    By default, vector drawings are spatially clustered so a multi-path
+    diagram surfaces as one row instead of hundreds. Tune via cluster_tolerance
+    (PDF points), min_area (PDF points² floor for cluster bbox), and
+    max_drawings (top-N cap). Pass verbose=True to skip clustering and emit
+    one row per raw PyMuPDF drawing (subject to the 50KB TSV cap).
+    """
     target = _open_target(path)
     parsed = _get_parsed(target)
     total = parsed["meta"]["page_count"]
@@ -957,24 +972,24 @@ def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
 
     rows: list[list] = [["index", "type", "x0", "y0", "x1", "y1", "hint"]]
     idx = 0
+    n_text = 0
+    n_image = 0
+    raw_drawing_count = 0
     with fitz.open(target) as doc:
         p = doc.load_page(page - 1)
 
-        # Text + image blocks via get_text("blocks").
-        # Each tuple: (x0, y0, x1, y1, text, block_no, block_type) where
-        # block_type 0=text, 1=image.
         for x0, y0, x1, y1, content, _bno, btype in p.get_text("blocks") or []:
             kind = "text" if btype == 0 else "image"
             if kind == "text":
                 hint = (content or "").strip().replace("\n", " ").replace("\t", " ")[:60]
+                n_text += 1
             else:
                 hint = ""
+                n_image += 1
             px = _points_to_pixels((x0, y0, x1, y1), dpi)
             rows.append([idx, kind, *px, hint])
             idx += 1
 
-        # Embedded raster images that may not have surfaced via "blocks".
-        # Dedupe by pixel bbox so we don't double-count.
         seen_image_rects: set[tuple] = set()
         for r in rows[1:]:
             if r[1] == "image":
@@ -989,24 +1004,52 @@ def pdf_inspect_layout(path: str, page: int, dpi: int = _DPI_DEFAULT) -> str:
             w, h = info.get("width", 0), info.get("height", 0)
             rows.append([idx, "image", *bbox_px, f"{w}×{h}"])
             idx += 1
+            n_image += 1
 
-        # Vector drawings: lines, rects, paths (table borders, charts, etc.)
-        for d in p.get_drawings() or []:
-            rect = d.get("rect")
-            if rect is None:
-                continue
-            n_items = len(d.get("items") or [])
-            rows.append([idx, "drawing", *_points_to_pixels(rect, dpi),
-                         f"{n_items} shapes"])
-            idx += 1
+        raw = p.get_drawings() or []
+        raw_drawing_count = len(raw)
+        if verbose:
+            for d in raw:
+                rect = d.get("rect")
+                if rect is None:
+                    continue
+                n_items = len(d.get("items") or [])
+                rows.append([idx, "drawing", *_points_to_pixels(rect, dpi),
+                             f"{n_items} shapes"])
+                idx += 1
+            n_drawing_rows = len(rows) - 1 - n_text - n_image
+        else:
+            clusters = _cluster_drawings(
+                raw,
+                cluster_tolerance=cluster_tolerance,
+                min_area=min_area,
+                max_drawings=max_drawings,
+            )
+            for c in clusters:
+                rows.append([idx, "drawing",
+                             *_points_to_pixels(c["rect"], dpi),
+                             f"{c['n_drawings']} drawings, {c['total_shapes']} shapes"])
+                idx += 1
+            n_drawing_rows = len(clusters)
 
+    if verbose:
+        cluster_summary = f"{n_drawing_rows} drawing rows (verbose, no clustering)"
+    else:
+        cluster_summary = (
+            f"{n_drawing_rows} drawing clusters (from {raw_drawing_count} raw drawings)"
+        )
     header = [
         f"# layout for page {page} of {total}, bbox in pixels @ {dpi} dpi",
-        f"# {len(rows) - 1} regions detected",
+        f"# {n_text} text, {n_image} image, {cluster_summary}",
     ]
     if len(rows) == 1:
         header.append("# no regions detected on this page")
         return "\n".join(header)
+    if not verbose and raw_drawing_count > 0 and n_drawing_rows == 0:
+        header.append(
+            "# all drawings filtered as noise "
+            "(set verbose=True or lower min_area to see them)"
+        )
     return _to_tsv(rows, header, max_chars=_TSV_MAX_CHARS)
 
 

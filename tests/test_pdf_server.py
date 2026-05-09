@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 
@@ -1100,7 +1102,7 @@ def test_inspect_layout_text_blocks(simple_text_pdf):
     out = pdf_server.pdf_inspect_layout("simple-text.pdf", page=1)
     # At least 1 text block on page 1; the hint must mention the fixture text.
     assert "# layout for page 1 of 5" in out
-    assert "regions detected" in out
+    assert "text," in out
     text_lines = [l for l in out.splitlines() if "\ttext\t" in l]
     assert len(text_lines) >= 1
     assert any("Page 1 of simple text fixture" in l for l in text_lines)
@@ -1408,3 +1410,46 @@ def test_cluster_drawings_perf_14k():
     assert elapsed < 2.0, f"clustering 15k rects took {elapsed:.2f}s (>2s ceiling)"
     # Sanity: should produce some clusters (most rects will overlap given density).
     assert len(clusters) > 0
+
+
+@pytest.fixture
+def vector_drawing_pdf(sandbox):
+    """A 1-page PDF with one big rectangle plus 5 dense groups of 12 small
+    rectangles each. Within each group the rects are 5pt apart (well within
+    the default cluster_tolerance=8) so they collapse into one cluster;
+    groups are 100pt apart so they stay separate. Expected compact output:
+    1 big + 5 group clusters = 6 drawing rows. Raw drawings: 61."""
+    import fitz
+    pdf_path = sandbox / "vector-drawing.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)  # A4 in pt
+    # Big rectangle filling most of the page — one obvious macro region.
+    page.draw_rect(fitz.Rect(50, 50, 545, 600))
+    # 5 packed groups in the lower portion, each 12 small rects.
+    for group in range(5):
+        base_x = 50 + group * 100  # groups 100pt apart (>> tolerance)
+        base_y = 700
+        for i in range(12):
+            x = base_x + (i % 4) * 5  # 5pt spacing within group < tol=8
+            y = base_y + (i // 4) * 5
+            page.draw_rect(fitz.Rect(x, y, x + 4, y + 4))
+    doc.save(pdf_path)
+    doc.close()
+    return pdf_path
+
+
+def test_pdf_inspect_layout_compact_default(vector_drawing_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_inspect_layout(vector_drawing_pdf.name, page=1, dpi=150)
+    # Header line should mention drawing-cluster summary.
+    assert "drawing cluster" in out, f"missing cluster header in: {out[:200]!r}"
+    # Drawing rows should be far fewer than the 61 raw drawings.
+    drawing_rows = [line for line in out.splitlines() if "\tdrawing\t" in line]
+    assert len(drawing_rows) < 15, (
+        f"compact mode emitted {len(drawing_rows)} drawing rows, expected <15"
+    )
+    # Hint format: "<n> drawings, <m> shapes".
+    assert any(re.search(r"\d+ drawings, \d+ shapes", row) for row in drawing_rows), \
+        f"no cluster hint found in: {drawing_rows!r}"
