@@ -1035,10 +1035,4 @@ async def _serve_cache_file(request):
 
 if __name__ == "__main__":
     _root()  # eager validation at startup
-    transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    if transport == "http":
-        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
-        mcp.settings.port = int(os.environ.get("MCP_PORT", "8092"))
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+    mcp.run()

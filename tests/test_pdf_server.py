@@ -692,6 +692,355 @@ def test_render_page_no_cache_env(simple_text_pdf, monkeypatch):
     assert not expected.exists()
 
 
+def _http_mode(monkeypatch, *, port="8092"):
+    """Switch the loaded pdf_server into HTTP transport URL-emitting mode.
+
+    Tools check MCP_TRANSPORT/MCP_HOST/MCP_PORT at *call* time (not import),
+    so a module reload isn't strictly required, but callers usually reload
+    anyway after changing other env vars."""
+    monkeypatch.setenv("MCP_TRANSPORT", "http")
+    monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+    monkeypatch.setenv("MCP_PORT", port)
+
+
+def test_render_page_inline_disabled_env(simple_text_pdf, monkeypatch):
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    monkeypatch.setenv("LM_PDF_INLINE_RENDER", "0")
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    # No inline image returned (the whole point of the env var).
+    assert len(image_items) == 0
+    assert len(text_items) == 1
+    assert "page 1" in text_items[0].text
+    assert "inline image suppressed" in text_items[0].text
+    assert "LM_PDF_INLINE_RENDER=0" in text_items[0].text
+    # In stdio mode (default — no MCP_TRANSPORT), no markdown image of any
+    # kind: neither data: nor http://. Clients rely on ImageContent only.
+    assert "data:image/png;base64," not in text_items[0].text
+    assert "http://" not in text_items[0].text
+    assert "cache://" not in text_items[0].text
+    # PNG must still be written to disk so the path in the response is valid.
+    expected = pdf_server._render_cache_path(simple_text_pdf, page=1, dpi=72)
+    assert expected.exists()
+
+
+def test_render_page_emits_http_url_in_http_mode(simple_text_pdf, monkeypatch):
+    """Under HTTP transport, render_page text must contain a markdown image
+    link to /files/renders/... so browser clients display the page without
+    the base64 entering the prompt context."""
+    import importlib
+    import re
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    _http_mode(monkeypatch)
+    monkeypatch.delenv("LM_PDF_INLINE_RENDER", raising=False)
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(image_items) == 1, "ImageContent stays for clients that consume it"
+    m = re.search(
+        r"!\[[^\]]*\]\(http://127\.0\.0\.1:8092/files/renders/([^)]+)\)",
+        text_items[0].text,
+    )
+    assert m is not None, (
+        f"expected /files/renders/... markdown image link, got: {text_items[0].text!r}"
+    )
+    # The URL must point at the same file the cache logic wrote.
+    expected = pdf_server._render_cache_path(simple_text_pdf, page=1, dpi=72)
+    assert expected.exists()
+    # No data: URL — that's the whole bug we're fixing.
+    assert "data:image/png;base64," not in text_items[0].text
+    # Reply-surfacing hint must precede the markdown image so capable models
+    # know to copy the link into their reply (so it renders in the main chat
+    # flow, not just inside the tool-result block).
+    assert "include the next markdown line verbatim in your reply" in text_items[0].text
+
+
+def test_render_page_http_url_emitted_even_when_inline_disabled(
+    simple_text_pdf, monkeypatch,
+):
+    """LM_PDF_INLINE_RENDER=0 + HTTP transport: ImageContent suppressed (no
+    base64 in the prompt) BUT the HTTP URL still emitted so the WebUI can
+    fetch and display the image. This is the combination that fixes context
+    overflow without losing image visibility."""
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    _http_mode(monkeypatch)
+    monkeypatch.setenv("LM_PDF_INLINE_RENDER", "0")
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=72)
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(image_items) == 0
+    assert "http://127.0.0.1:8092/files/renders/" in text_items[0].text
+    assert "inline image suppressed" in text_items[0].text
+
+
+def test_extract_region_emits_http_url_in_http_mode(simple_text_pdf, monkeypatch):
+    """Under HTTP transport, extract_region text must contain a markdown image
+    link to /files/extracts/... pointing to the auto-saved crop."""
+    import importlib
+    import re
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    _http_mode(monkeypatch)
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300], dpi=72,
+    )
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(text_items) == 1 and len(image_items) == 1
+    m = re.search(
+        r"!\[[^\]]*\]\(http://127\.0\.0\.1:8092/files/extracts/([^)]+)\)",
+        text_items[0].text,
+    )
+    assert m is not None, (
+        f"expected /files/extracts/... markdown image link, got: {text_items[0].text!r}"
+    )
+    # No data: URL bloat in the text (regression guard for the context overflow).
+    assert "data:image/png;base64," not in text_items[0].text
+    # Reply-surfacing hint must precede the markdown image.
+    assert "include the next markdown line verbatim in your reply" in text_items[0].text
+
+
+def test_extract_region_no_url_in_stdio_mode(simple_text_pdf):
+    """Default (stdio) mode: extract_region must NOT emit any URL in text.
+    Clients consume the image via ImageContent only."""
+    import importlib
+    from mcp.types import ImageContent, TextContent
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300], dpi=72,
+    )
+    text = next(c for c in out if isinstance(c, TextContent)).text
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    assert len(image_items) == 1
+    assert "http://" not in text
+    assert "data:image/png;base64," not in text
+    assert "cache://" not in text
+
+
+def test_extract_region_no_unexpected_url_scheme_in_text(simple_text_pdf, monkeypatch):
+    """Even in HTTP mode, the only URL scheme allowed is the legitimate
+    http:// link to /files/. Guards against the original `# cached at: ...`
+    regression that produced fake `cache://...` URLs the model could
+    hallucinate into."""
+    import importlib
+    import re
+    import pdf_server
+    from mcp.types import TextContent
+    _http_mode(monkeypatch)
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[50, 50, 250, 250], dpi=72,
+    )
+    text = next(c for c in out if isinstance(c, TextContent)).text
+    # Strip the legitimate http:// link before scheme-shape probing.
+    stripped = re.sub(
+        r"http://127\.0\.0\.1:8092/files/[^\s)]+", "<HTTP_URL>", text,
+    )
+    assert "cache://" not in stripped
+    assert "://" not in stripped, (
+        f"text contains an unexpected URL scheme: {stripped!r}"
+    )
+
+
+def test_extract_region_distinct_bboxes_yield_distinct_bytes(simple_text_pdf):
+    """Two non-overlapping crops on the same page must produce different PNG
+    bytes. Defends against any future cache-key collision between extracts."""
+    import importlib
+    import pdf_server
+    from mcp.types import ImageContent
+    importlib.reload(pdf_server)
+    out_a = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[80, 80, 240, 240], dpi=72,
+    )
+    out_b = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[300, 300, 460, 460], dpi=72,
+    )
+    img_a = next(c for c in out_a if isinstance(c, ImageContent)).data
+    img_b = next(c for c in out_b if isinstance(c, ImageContent)).data
+    assert img_a != img_b, "two distinct bboxes returned identical PNG bytes"
+
+
+def test_extract_region_inline_render_env_does_not_affect_extract(
+    simple_text_pdf, monkeypatch,
+):
+    """LM_PDF_INLINE_RENDER=0 governs render_page only. Under HTTP mode,
+    extract_region must still return ImageContent and emit the HTTP URL."""
+    import importlib
+    import pdf_server
+    from mcp.types import ImageContent, TextContent
+    _http_mode(monkeypatch)
+    monkeypatch.setenv("LM_PDF_INLINE_RENDER", "0")
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[100, 100, 300, 300], dpi=72,
+    )
+    image_items = [c for c in out if isinstance(c, ImageContent)]
+    text_items = [c for c in out if isinstance(c, TextContent)]
+    assert len(image_items) == 1, (
+        "extract_region must return ImageContent even when LM_PDF_INLINE_RENDER=0"
+    )
+    assert "http://127.0.0.1:8092/files/extracts/" in text_items[0].text
+
+
+def test_extract_region_save_as_outside_cache_omits_http_url(
+    simple_text_pdf, monkeypatch,
+):
+    """When save_as routes the PNG outside .lm-pdf-cache/, no HTTP URL is
+    emitted (the /files route only serves cache-dir files). ImageContent is
+    still returned so non-WebUI clients work."""
+    import importlib
+    import pdf_server
+    from mcp.types import ImageContent, TextContent
+    _http_mode(monkeypatch)
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf",
+        page=1,
+        bbox=[100, 100, 300, 300],
+        dpi=72,
+        save_as="my-crop.png",
+    )
+    text = next(c for c in out if isinstance(c, TextContent)).text
+    assert "http://" not in text, (
+        "save_as paths land outside cache dir; no HTTP URL should be emitted"
+    )
+    assert any(isinstance(c, ImageContent) for c in out)
+
+
+def test_files_route_serves_cached_extract(simple_text_pdf, monkeypatch):
+    """End-to-end: extract_region writes a PNG to .lm-pdf-cache/extracts/,
+    GET /files/extracts/<name> via the registered Starlette route returns
+    the same bytes with image/png content type."""
+    import asyncio
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=[80, 80, 240, 240], dpi=72,
+    )
+    # Find the file the tool wrote, derive the relative URL.
+    extracts = pdf_server._extracts_dir()
+    saved = next(extracts.glob("*.png"))
+    rel = f"extracts/{saved.name}"
+
+    class _MockReq:
+        path_params = {"rel_path": rel}
+
+    resp = asyncio.run(pdf_server._serve_cache_file(_MockReq()))
+    assert resp.status_code == 200
+    assert resp.media_type == "image/png"
+    # FileResponse exposes the underlying path (as Path or str).
+    from pathlib import Path
+    assert Path(resp.path) == saved
+    # Cross-origin headers must be present so browsers (running the WebUI on
+    # a different port) can embed the image. Missing CORP is what blocked
+    # rendering in llama.cpp WebUI on Firefox/Chrome.
+    assert resp.headers.get("Cross-Origin-Resource-Policy") == "cross-origin"
+    assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+
+
+def test_files_route_404_on_missing(simple_text_pdf, monkeypatch):
+    import asyncio
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pdf_server._cache_dir()  # ensure cache dir exists
+
+    class _MockReq:
+        path_params = {"rel_path": "extracts/does-not-exist.png"}
+
+    resp = asyncio.run(pdf_server._serve_cache_file(_MockReq()))
+    assert resp.status_code == 404
+
+
+def test_files_route_blocks_path_traversal(simple_text_pdf, monkeypatch, tmp_path):
+    """Any path that resolves outside .lm-pdf-cache/ must return 403.
+    Guards against `../`, absolute paths, and symlink escapes."""
+    import asyncio
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pdf_server._cache_dir()  # ensure cache dir exists
+
+    for malicious in [
+        "../../../etc/passwd",
+        "../../etc/passwd",
+        "../foo.png",  # one level up = inside sandbox but outside cache
+        "/etc/passwd",
+    ]:
+        class _MockReq:
+            path_params = {"rel_path": malicious}
+
+        resp = asyncio.run(pdf_server._serve_cache_file(_MockReq()))
+        assert resp.status_code in (403, 404), (
+            f"path {malicious!r} expected 403/404, got {resp.status_code}"
+        )
+
+
+def test_extract_region_pixel_matches_render_subregion(simple_text_pdf):
+    """The cropped PNG returned by pdf_extract_region must contain the same
+    pixels as the matching sub-region of pdf_render_page at the same DPI.
+    This catches silent regressions where bbox math drifts (e.g. a future
+    DPI/points conversion bug returns the full page instead of the crop)."""
+    import importlib
+    from base64 import b64decode
+    from io import BytesIO
+    import numpy as np
+    from PIL import Image
+    from mcp.types import ImageContent
+    import pdf_server
+    importlib.reload(pdf_server)
+
+    dpi = 72
+    bbox = [40, 60, 200, 180]  # x0, y0, x1, y1 in pixels @ dpi
+
+    render_out = pdf_server.pdf_render_page("simple-text.pdf", page=1, dpi=dpi)
+    render_b64 = next(
+        c for c in render_out if isinstance(c, ImageContent)
+    ).data
+    render_img = np.asarray(Image.open(BytesIO(b64decode(render_b64))).convert("RGB"))
+
+    extract_out = pdf_server.pdf_extract_region(
+        "simple-text.pdf", page=1, bbox=bbox, dpi=dpi,
+    )
+    extract_b64 = next(
+        c for c in extract_out if isinstance(c, ImageContent)
+    ).data
+    extract_img = np.asarray(
+        Image.open(BytesIO(b64decode(extract_b64))).convert("RGB")
+    )
+
+    x0, y0, x1, y1 = bbox
+    crop_from_render = render_img[y0:y1, x0:x1]
+
+    # Allow ±1 px tolerance on each side for floating-point clip rounding.
+    assert abs(extract_img.shape[0] - crop_from_render.shape[0]) <= 1
+    assert abs(extract_img.shape[1] - crop_from_render.shape[1]) <= 1
+
+    # Trim to the common region before comparing pixels.
+    h = min(extract_img.shape[0], crop_from_render.shape[0])
+    w = min(extract_img.shape[1], crop_from_render.shape[1])
+    diff = np.abs(
+        extract_img[:h, :w].astype(np.int16)
+        - crop_from_render[:h, :w].astype(np.int16)
+    )
+    # PyMuPDF's get_pixmap(clip=...) should produce byte-equivalent output to
+    # slicing a full render. A small mean threshold tolerates anti-alias
+    # jitter at clip boundaries.
+    assert diff.mean() < 2.0, f"mean abs pixel diff too high: {diff.mean()}"
+
+
 def test_smoke_full_pipeline(with_toc_pdf, with_tables_pdf, simple_text_pdf):
     """Run every tool in the order an LLM would: overview → search → find_pages
     → read_section → extract_tables → render_page. The assertion focus is that

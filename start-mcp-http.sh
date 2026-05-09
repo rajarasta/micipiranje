@@ -38,7 +38,8 @@ start_one lm-fs   8089 "$PROJECT_DIR/server.py"
 start_one lm-web  8090 "$PROJECT_DIR/web_server.py" \
   LM_WEB_BACKEND=auto SEARXNG_URL=http://127.0.0.1:8080
 start_one lm-xlsx 8091 "$PROJECT_DIR/xlsx_server.py"
-start_one lm-pdf  8092 "$PROJECT_DIR/pdf_server.py"
+start_one lm-pdf  8092 "$PROJECT_DIR/pdf_server.py" \
+  LM_PDF_INLINE_RENDER="${LM_PDF_INLINE_RENDER:-0}"
 
 echo
 echo "All MCP servers started. Endpoints:"
