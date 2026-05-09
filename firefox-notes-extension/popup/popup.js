@@ -24,6 +24,7 @@ function bindStaticEvents() {
   $('#btn-new').addEventListener('click', onNewNoteClick);
   $('#search').addEventListener('input', onSearchInput);
   $('#btn-back').addEventListener('click', () => { showList().catch(err => console.error('[notes]', err)); });
+  $('#btn-delete').addEventListener('click', () => { onDeleteNoteClick().catch(err => console.error('[notes]', err)); });
 }
 
 async function onNewNoteClick() {
@@ -235,6 +236,18 @@ function showToast(message, kind = 'info') {
   if (kind === 'error') el.classList.add('error');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add('hidden'), 2000);
+}
+
+async function onDeleteNoteClick() {
+  if (!state.currentNoteId) return;
+  if (!confirm('Obrisati ovu bilješku i sve privitke?')) return;
+  await deleteNote(state.db, state.currentNoteId);
+  for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
+  objectUrls.clear();
+  state.currentNoteId = null;
+  $('#view-editor').classList.add('hidden');
+  $('#view-list').classList.remove('hidden');
+  await renderList();
 }
 
 async function showList() {
