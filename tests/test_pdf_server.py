@@ -1328,3 +1328,33 @@ def test_cluster_drawings_tolerance_merges():
         [a, b], cluster_tolerance=0, min_area=0, max_drawings=10,
     )
     assert len(clusters) == 2
+
+
+def test_cluster_drawings_filters_zero_dim():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Width=0 (vertical line) and height=0 (horizontal line) — both useless
+    # for cropping, must be dropped before clustering.
+    horizontal_line = _make_drawing(10, 10, 50, 10)
+    vertical_line = _make_drawing(10, 10, 10, 50)
+    legit = _make_drawing(100, 100, 200, 200)
+    clusters = pdf_server._cluster_drawings(
+        [horizontal_line, vertical_line, legit],
+        cluster_tolerance=0, min_area=0, max_drawings=10,
+    )
+    assert len(clusters) == 1
+    assert clusters[0]["rect"] == (100, 100, 200, 200)
+
+
+def test_cluster_drawings_filters_below_min_area():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    tiny = _make_drawing(10, 10, 15, 15)        # 25 pt²
+    medium = _make_drawing(100, 100, 200, 200)  # 10000 pt²
+    clusters = pdf_server._cluster_drawings(
+        [tiny, medium], cluster_tolerance=0, min_area=100, max_drawings=10,
+    )
+    assert len(clusters) == 1
+    assert clusters[0]["rect"] == (100, 100, 200, 200)
