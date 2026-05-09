@@ -1309,3 +1309,22 @@ def test_cluster_drawings_disjoint_separate():
     rects = {c["rect"] for c in clusters}
     assert (10.0, 10.0, 50.0, 50.0) in rects
     assert (500.0, 500.0, 600.0, 600.0) in rects
+
+
+def test_cluster_drawings_tolerance_merges():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # Two rects 5 PDF points apart; with tolerance=8 they should merge.
+    a = _make_drawing(10, 10, 50, 50)
+    b = _make_drawing(55, 10, 90, 50)  # 5pt gap on x-axis
+    clusters = pdf_server._cluster_drawings(
+        [a, b], cluster_tolerance=8, min_area=0, max_drawings=10,
+    )
+    assert len(clusters) == 1, f"expected merge with tolerance=8, got {clusters}"
+
+    # Same rects with tolerance=0 must stay separate.
+    clusters = pdf_server._cluster_drawings(
+        [a, b], cluster_tolerance=0, min_area=0, max_drawings=10,
+    )
+    assert len(clusters) == 2
