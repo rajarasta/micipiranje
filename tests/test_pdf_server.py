@@ -1381,3 +1381,30 @@ def test_cluster_drawings_caps_to_max_drawings():
     assert clusters[0]["rect"] == (400, 0, 450, 50)
     assert clusters[1]["rect"] == (300, 0, 340, 40)
     assert clusters[2]["rect"] == (200, 0, 230, 30)
+
+
+def test_cluster_drawings_perf_14k():
+    """15K random rects on a 2500x1750 px canvas must cluster in < 2s.
+    Sanity ceiling for the worst observed page (page 5 of the architectural
+    PDF: 14735 raw drawings)."""
+    import importlib
+    import random
+    import time
+    import pdf_server
+    importlib.reload(pdf_server)
+    rng = random.Random(0)
+    drawings = []
+    for _ in range(15000):
+        x0 = rng.uniform(0, 2400)
+        y0 = rng.uniform(0, 1650)
+        w = rng.uniform(1, 100)
+        h = rng.uniform(1, 100)
+        drawings.append(_make_drawing(x0, y0, x0 + w, y0 + h))
+    t0 = time.perf_counter()
+    clusters = pdf_server._cluster_drawings(
+        drawings, cluster_tolerance=8, min_area=100, max_drawings=20,
+    )
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, f"clustering 15k rects took {elapsed:.2f}s (>2s ceiling)"
+    # Sanity: should produce some clusters (most rects will overlap given density).
+    assert len(clusters) > 0
