@@ -1,5 +1,5 @@
 import { openDb, DB_NAME } from '../lib/db.js';
-import { createNote, getNote, listNotes } from '../lib/notes.js';
+import { createNote, getNote, listNotes, updateNote } from '../lib/notes.js';
 
 let db;
 
@@ -52,5 +52,37 @@ describe('listNotes', () => {
   test('returns empty array when there are no notes', async () => {
     const list = await listNotes(db);
     expect(list).toEqual([]);
+  });
+});
+
+describe('updateNote', () => {
+  test('updates fields and bumps updatedAt', async () => {
+    const note = await createNote(db);
+    await new Promise(r => setTimeout(r, 2));
+
+    const updated = await updateNote(db, note.id, { title: 'Hello', body: 'world' });
+
+    expect(updated.title).toBe('Hello');
+    expect(updated.body).toBe('world');
+    expect(updated.updatedAt).toBeGreaterThan(note.updatedAt);
+    expect(updated.createdAt).toBe(note.createdAt);
+    expect(updated.attachmentIds).toEqual([]);
+  });
+
+  test('throws if note does not exist', async () => {
+    await expect(updateNote(db, 'missing', { title: 'x' })).rejects.toThrow(/not found/i);
+  });
+
+  test('does not allow overwriting id, createdAt, or attachmentIds', async () => {
+    const note = await createNote(db);
+    const updated = await updateNote(db, note.id, {
+      title: 'ok',
+      id: 'evil',
+      createdAt: 0,
+      attachmentIds: ['injected']
+    });
+    expect(updated.id).toBe(note.id);
+    expect(updated.createdAt).toBe(note.createdAt);
+    expect(updated.attachmentIds).toEqual([]);
   });
 });
