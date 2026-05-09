@@ -1,5 +1,6 @@
 import { openDb, DB_NAME } from '../lib/db.js';
 import { createNote, getNote, listNotes, updateNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
+import { deleteNote, searchNotes } from '../lib/notes.js';
 
 let db;
 
@@ -131,5 +132,70 @@ describe('removeAttachment', () => {
   test('is a no-op when attachment is not linked to that note', async () => {
     const note = await createNote(db);
     await expect(removeAttachment(db, note.id, 'never-existed')).resolves.toBeUndefined();
+  });
+});
+
+describe('deleteNote', () => {
+  test('cascades: deletes the note and all its attachments', async () => {
+    const note = await createNote(db);
+    const a1 = await addAttachment(db, note.id, new Blob(['1']), 'image/png', 'a.png');
+    const a2 = await addAttachment(db, note.id, new Blob(['2']), 'image/png', 'b.png');
+
+    await deleteNote(db, note.id);
+
+    expect(await getNote(db, note.id)).toBeUndefined();
+    expect(await getAttachment(db, a1.id)).toBeUndefined();
+    expect(await getAttachment(db, a2.id)).toBeUndefined();
+  });
+
+  test('does not affect other notes attachments', async () => {
+    const noteA = await createNote(db);
+    const attA = await addAttachment(db, noteA.id, new Blob(['x']), 'image/png', 'a.png');
+    const noteB = await createNote(db);
+    const attB = await addAttachment(db, noteB.id, new Blob(['y']), 'image/png', 'b.png');
+
+    await deleteNote(db, noteA.id);
+
+    expect(await getAttachment(db, attA.id)).toBeUndefined();
+    expect(await getAttachment(db, attB.id)).toBeDefined();
+    expect(await getNote(db, noteB.id)).toBeDefined();
+  });
+
+  test('is a no-op for missing id', async () => {
+    await expect(deleteNote(db, 'missing')).resolves.toBeUndefined();
+  });
+});
+
+describe('searchNotes', () => {
+  test('case-insensitive substring match on title and body', async () => {
+    const a = await createNote(db);
+    await updateNote(db, a.id, { title: 'Sastanak s timom', body: 'razgovarali smo o roadmapu' });
+    const b = await createNote(db);
+    await updateNote(db, b.id, { title: 'Ideja', body: 'možda dodati FEATURE x' });
+    const c = await createNote(db);
+    await updateNote(db, c.id, { title: 'Lista', body: 'kupiti kruh' });
+
+    const all = await searchNotes(db, '');
+    expect(all).toHaveLength(3);
+
+    const byTitle = await searchNotes(db, 'sastanak');
+    expect(byTitle.map(n => n.id)).toEqual([a.id]);
+
+    const byBody = await searchNotes(db, 'feature');
+    expect(byBody.map(n => n.id)).toEqual([b.id]);
+
+    const none = await searchNotes(db, 'zzznomatch');
+    expect(none).toEqual([]);
+  });
+
+  test('preserves DESC updatedAt ordering of results', async () => {
+    const a = await createNote(db);
+    await updateNote(db, a.id, { title: 'foo' });
+    await new Promise(r => setTimeout(r, 2));
+    const b = await createNote(db);
+    await updateNote(db, b.id, { title: 'foo' });
+
+    const results = await searchNotes(db, 'foo');
+    expect(results.map(n => n.id)).toEqual([b.id, a.id]);
   });
 });

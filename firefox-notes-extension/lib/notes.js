@@ -83,3 +83,26 @@ export async function removeAttachment(db, noteId, attachmentId) {
     });
   });
 }
+
+export async function deleteNote(db, id) {
+  const note = await getNote(db, id);
+  if (!note) return;
+
+  await runTx(db, ['notes', 'attachments'], 'readwrite', (tx) => {
+    const attStore = tx.objectStore('attachments');
+    for (const attId of note.attachmentIds) {
+      attStore.delete(attId);
+    }
+    tx.objectStore('notes').delete(id);
+  });
+}
+
+export async function searchNotes(db, query) {
+  const all = await listNotes(db);
+  if (!query) return all;
+  const needle = query.toLowerCase();
+  return all.filter(n =>
+    n.title.toLowerCase().includes(needle) ||
+    n.body.toLowerCase().includes(needle)
+  );
+}
