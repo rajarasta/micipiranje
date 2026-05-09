@@ -356,6 +356,10 @@ index   type      x0    y0    x1     y1     hint
 - `page.get_drawings()` — vector path-ovi.
 - Helper `_points_to_pixels(rect, dpi)` konvertira PyMuPDF native (PDF točke) u pixele @ DPI.
 
+> **Update 2026-05-09:** vector drawings are now spatially clustered by
+> default to handle PDFs where `get_drawings()` returns thousands of raw
+> path entries. See [`2026-05-09-pdf-inspect-layout-clustering-design.md`](./2026-05-09-pdf-inspect-layout-clustering-design.md).
+
 ### 6.9 `pdf_extract_region(path, page, bbox, dpi=150, save_as=None)`
 
 Crop pravokutne regije stranice kao PNG, sprema unutar sandboxa, vraća inline kao multipart. Glavni write-tool servera.
