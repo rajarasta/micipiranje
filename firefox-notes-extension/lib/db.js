@@ -48,3 +48,38 @@ export function del(db, storeName, id) {
     tx.onabort = () => reject(tx.error);
   });
 }
+
+export function listByIndex(db, storeName, indexName, direction = 'prev') {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const index = tx.objectStore(storeName).index(indexName);
+    const req = index.openCursor(null, direction);
+    const out = [];
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        out.push(cursor.value);
+        cursor.continue();
+      } else {
+        resolve(out);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export function runTx(db, storeNames, mode, callback) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeNames, mode);
+    let userError = null;
+    tx.oncomplete = () => (userError ? reject(userError) : resolve());
+    tx.onerror = () => reject(userError || tx.error);
+    tx.onabort = () => reject(userError || tx.error || new Error('Transaction aborted'));
+    try {
+      callback(tx);
+    } catch (err) {
+      userError = err;
+      tx.abort();
+    }
+  });
+}
