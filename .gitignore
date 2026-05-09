@@ -1,0 +1,34 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Project-local caches
+.hermes/
+.web_cache/
+
+# Runtime sandbox — contains user PDFs and per-render cache (.lm-pdf-cache/)
+lm-studio-sandbox/
+
+# Large binaries — never commit
+modeli/
+*.gguf
+*.bin
+*.safetensors
+*.deb
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Direnv / virtualenv
+.envrc
+.venv/
+venv/
+
+# uv
+.uv-cache/
