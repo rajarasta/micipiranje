@@ -1358,3 +1358,26 @@ def test_cluster_drawings_filters_below_min_area():
     )
     assert len(clusters) == 1
     assert clusters[0]["rect"] == (100, 100, 200, 200)
+
+
+def test_cluster_drawings_caps_to_max_drawings():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    # 5 disjoint rects with monotonically increasing area; cap at 3 must
+    # return the 3 largest.
+    drawings = [
+        _make_drawing(0, 0, 10, 10),       # area 100  (rank 5)
+        _make_drawing(100, 0, 120, 20),    # area 400  (rank 4)
+        _make_drawing(200, 0, 230, 30),    # area 900  (rank 3)
+        _make_drawing(300, 0, 340, 40),    # area 1600 (rank 2)
+        _make_drawing(400, 0, 450, 50),    # area 2500 (rank 1, biggest)
+    ]
+    clusters = pdf_server._cluster_drawings(
+        drawings, cluster_tolerance=0, min_area=0, max_drawings=3,
+    )
+    assert len(clusters) == 3
+    # Order must be biggest first.
+    assert clusters[0]["rect"] == (400, 0, 450, 50)
+    assert clusters[1]["rect"] == (300, 0, 340, 40)
+    assert clusters[2]["rect"] == (200, 0, 230, 30)
