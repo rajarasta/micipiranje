@@ -969,6 +969,12 @@ def pdf_inspect_layout(
         raise ValueError(f"page must be in range [1, {total}]")
     if not (_DPI_MIN <= dpi <= _DPI_MAX):
         raise ValueError(f"dpi must be between {_DPI_MIN} and {_DPI_MAX}")
+    if cluster_tolerance < 0:
+        raise ValueError(f"cluster_tolerance must be >= 0, got {cluster_tolerance}")
+    if min_area < 0:
+        raise ValueError(f"min_area must be >= 0, got {min_area}")
+    if max_drawings < 1:
+        raise ValueError(f"max_drawings must be >= 1, got {max_drawings}")
 
     rows: list[list] = [["index", "type", "x0", "y0", "x1", "y1", "hint"]]
     idx = 0

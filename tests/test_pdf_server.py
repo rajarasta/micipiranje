@@ -1482,3 +1482,21 @@ def test_pdf_inspect_layout_verbose_keeps_old_format(vector_drawing_pdf):
         )
     # Header should call out verbose mode.
     assert "verbose" in out.splitlines()[1]
+
+
+def test_pdf_inspect_layout_validates_new_params(simple_text_pdf):
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    with pytest.raises(ValueError, match="cluster_tolerance"):
+        pdf_server.pdf_inspect_layout(
+            simple_text_pdf.name, page=1, cluster_tolerance=-1,
+        )
+    with pytest.raises(ValueError, match="min_area"):
+        pdf_server.pdf_inspect_layout(
+            simple_text_pdf.name, page=1, min_area=-1,
+        )
+    with pytest.raises(ValueError, match="max_drawings"):
+        pdf_server.pdf_inspect_layout(
+            simple_text_pdf.name, page=1, max_drawings=0,
+        )
