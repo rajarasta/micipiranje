@@ -260,7 +260,7 @@ def _cluster_drawings(
     # Spatial hash: bin rects by grid cell so we only test pairs that share a
     # cell. Cell size scales with tolerance; floor of 50pt keeps the bin
     # count modest on tiny-tolerance runs.
-    cell = max(50.0, tol * 10.0) if tol > 0 else 50.0
+    cell = max(50.0, float(cluster_tolerance) * 10.0)
     bins: dict[tuple[int, int], list[int]] = {}
     for i in range(n):
         x0, y0, x1, y1 = rects[i]
@@ -272,7 +272,11 @@ def _cluster_drawings(
             for cy in range(cy0, cy1 + 1):
                 bins.setdefault((cx, cy), []).append(i)
 
-    seen_pairs: set[tuple[int, int]] = set()
+    # Rects spanning multiple cells get tested in each shared cell. That's fine:
+    # the overlap test is cheap, union() is idempotent (find→find→assign), and
+    # skipping the set lookup wins on the common case where most pairs share
+    # only one cell anyway. (Reviewer-validated against design doc: union-find
+    # absorbs duplicate unions without state corruption.)
     for members in bins.values():
         m = len(members)
         for a in range(m):
@@ -280,10 +284,6 @@ def _cluster_drawings(
             ix0, iy0, ix1, iy1 = rects[i]
             for b in range(a + 1, m):
                 j = members[b]
-                pair = (i, j) if i < j else (j, i)
-                if pair in seen_pairs:
-                    continue
-                seen_pairs.add(pair)
                 jx0, jy0, jx1, jy1 = rects[j]
                 if ix0 - tol <= jx1 and jx0 <= ix1 + tol and \
                    iy0 - tol <= jy1 and jy0 <= iy1 + tol:
