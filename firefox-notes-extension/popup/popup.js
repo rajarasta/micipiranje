@@ -1,5 +1,6 @@
 import { openDb } from '../lib/db.js';
-import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote } from '../lib/notes.js';
+import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
+import { parsePaste } from '../lib/clipboard.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -15,6 +16,7 @@ const BODY_DEBOUNCE_MS = 500;
 async function init() {
   state.db = await openDb();
   bindStaticEvents();
+  bindPasteHandler();
   await renderList();
 }
 
@@ -127,12 +129,118 @@ async function flushAndPrune() {
   }
 }
 
+const objectUrls = new Map();  // attachmentId -> objectUrl, for cleanup
+
 function renderAttachments(note) {
-  $('#attachment-list').innerHTML = '';
+  const ul = $('#attachment-list');
+  ul.innerHTML = '';
+  for (const attId of note.attachmentIds) {
+    renderAttachmentRow(attId).catch(err => console.error('[notes] att render', err));
+  }
+}
+
+async function renderAttachmentRow(attId) {
+  const att = await getAttachment(state.db, attId);
+  const li = document.createElement('li');
+  li.className = 'att-item';
+  li.dataset.id = attId;
+
+  if (!att) {
+    li.innerHTML = `<span class="thumb">⚠</span><span class="name">privitak nedostaje</span><button type="button">✕</button>`;
+  } else {
+    const url = URL.createObjectURL(att.blob);
+    objectUrls.set(attId, url);
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = '';
+    img.src = url;
+    img.onerror = () => { img.replaceWith(document.createTextNode('⚠')); };
+    img.addEventListener('click', () => openModal(url));
+
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = `${att.filename} (${formatSize(att.size)})`;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '✕';
+    btn.addEventListener('click', () => removeAttachmentClick(attId));
+
+    li.append(img, name, btn);
+  }
+  $('#attachment-list').appendChild(li);
+}
+
+async function removeAttachmentClick(attId) {
+  if (!confirm('Obrisati ovaj privitak?')) return;
+  await removeAttachment(state.db, state.currentNoteId, attId);
+  releaseObjectUrl(attId);
+  const note = await getNote(state.db, state.currentNoteId);
+  if (note) renderAttachments(note);
+}
+
+function releaseObjectUrl(attId) {
+  const url = objectUrls.get(attId);
+  if (url) {
+    URL.revokeObjectURL(url);
+    objectUrls.delete(attId);
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function openModal(src) {
+  $('#modal-img').src = src;
+  $('#modal').classList.remove('hidden');
+}
+
+function bindPasteHandler() {
+  $('#editor-body').addEventListener('paste', onPaste);
+}
+
+async function onPaste(e) {
+  if (!state.currentNoteId) return;
+  const result = parsePaste(e);
+  if (!result) return;
+
+  if (result.kind === 'rejected') {
+    showToast(`Slika je prevelika (${formatSize(result.size)}, max 50 MB)`, 'error');
+    return;
+  }
+
+  try {
+    const att = await addAttachment(state.db, state.currentNoteId, result.blob, result.mimeType, result.filename);
+    showToast(`Slika dodana (${formatSize(att.size)})`);
+    const note = await getNote(state.db, state.currentNoteId);
+    if (note) renderAttachments(note);
+  } catch (err) {
+    console.error('[notes] addAttachment failed', err);
+    if (err.name === 'QuotaExceededError') {
+      showToast('Nema dovoljno prostora. Obriši stare bilješke ili privitke.', 'error');
+    } else {
+      showToast('Greška pri spremanju slike.', 'error');
+    }
+  }
+}
+
+let toastTimer = null;
+function showToast(message, kind = 'info') {
+  const el = $('#toast');
+  el.textContent = message;
+  el.classList.remove('hidden', 'error');
+  if (kind === 'error') el.classList.add('error');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 2000);
 }
 
 async function showList() {
   await flushAndPrune();
+  for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
+  objectUrls.clear();
   state.currentNoteId = null;
   $('#view-editor').classList.add('hidden');
   $('#view-list').classList.remove('hidden');
@@ -141,6 +249,11 @@ async function showList() {
 
 window.addEventListener('pagehide', () => {
   flushAndPrune().catch(err => console.error('[notes] flush on hide failed', err));
+});
+
+$('#modal').addEventListener('click', () => {
+  $('#modal').classList.add('hidden');
+  $('#modal-img').src = '';
 });
 
 init().catch(err => {
