@@ -6,7 +6,42 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div id="app">Bilješke — učitavanje…</div>
+  <main id="app">
+    <!-- LIST VIEW -->
+    <section id="view-list" class="view">
+      <header class="bar">
+        <h1>Bilješke</h1>
+        <button id="btn-new" type="button">+ Nova</button>
+      </header>
+      <div class="search-row">
+        <input id="search" type="search" placeholder="🔍 Pretraži bilješke…" autocomplete="off">
+      </div>
+      <ul id="note-list" class="note-list"></ul>
+      <p id="empty-list" class="empty">Još nema bilješki.</p>
+    </section>
+
+    <!-- EDITOR VIEW -->
+    <section id="view-editor" class="view hidden">
+      <header class="bar">
+        <button id="btn-back" type="button">← Natrag</button>
+        <button id="btn-delete" type="button" class="danger">Obriši</button>
+      </header>
+      <input id="editor-title" type="text" placeholder="Naslov…" maxlength="200">
+      <textarea id="editor-body" placeholder="Tekst bilješke…"></textarea>
+      <section class="attachments">
+        <h2>Privitci</h2>
+        <ul id="attachment-list"></ul>
+      </section>
+    </section>
+
+    <!-- TOAST -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- IMAGE PREVIEW MODAL -->
+    <div id="modal" class="modal hidden">
+      <img id="modal-img" alt="">
+    </div>
+  </main>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
