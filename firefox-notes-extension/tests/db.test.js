@@ -1,11 +1,5 @@
 import { openDb, DB_NAME, DB_VERSION, put, get, del } from '../lib/db.js';
 
-// jsdom in Node 18 hides structuredClone, which fake-indexeddb requires when
-// cloning records on put(). Plain-object fixtures here are JSON-safe.
-if (typeof globalThis.structuredClone !== 'function') {
-  globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
-}
-
 beforeEach(() => {
   return new Promise((resolve, reject) => {
     const req = indexedDB.deleteDatabase(DB_NAME);
