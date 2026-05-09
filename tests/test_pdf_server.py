@@ -1306,3 +1306,6 @@ def test_cluster_drawings_disjoint_separate():
         [a, b], cluster_tolerance=8, min_area=0, max_drawings=10,
     )
     assert len(clusters) == 2
+    rects = {c["rect"] for c in clusters}
+    assert (10.0, 10.0, 50.0, 50.0) in rects
+    assert (500.0, 500.0, 600.0, 600.0) in rects
