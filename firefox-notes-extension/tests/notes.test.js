@@ -1,5 +1,5 @@
 import { openDb, DB_NAME } from '../lib/db.js';
-import { createNote, getNote, listNotes, updateNote } from '../lib/notes.js';
+import { createNote, getNote, listNotes, updateNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
 
 let db;
 
@@ -84,5 +84,52 @@ describe('updateNote', () => {
     expect(updated.id).toBe(note.id);
     expect(updated.createdAt).toBe(note.createdAt);
     expect(updated.attachmentIds).toEqual([]);
+  });
+});
+
+describe('addAttachment', () => {
+  test('stores blob and links attachment id to the note', async () => {
+    const note = await createNote(db);
+    const blob = new Blob(['fake-png-bytes'], { type: 'image/png' });
+
+    const att = await addAttachment(db, note.id, blob, 'image/png', 'screenshot.png');
+
+    expect(att.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(att.mimeType).toBe('image/png');
+    expect(att.filename).toBe('screenshot.png');
+    expect(att.size).toBe(blob.size);
+
+    const reloaded = await getNote(db, note.id);
+    expect(reloaded.attachmentIds).toContain(att.id);
+    expect(reloaded.updatedAt).toBeGreaterThanOrEqual(note.updatedAt);
+
+    const stored = await getAttachment(db, att.id);
+    expect(stored.blob).toBeInstanceOf(Blob);
+    expect(stored.size).toBe(blob.size);
+  });
+
+  test('throws when note does not exist', async () => {
+    const blob = new Blob(['x'], { type: 'image/png' });
+    await expect(addAttachment(db, 'missing', blob, 'image/png', 'x.png'))
+      .rejects.toThrow(/not found/i);
+  });
+});
+
+describe('removeAttachment', () => {
+  test('deletes the blob and removes the link from the note', async () => {
+    const note = await createNote(db);
+    const blob = new Blob(['x'], { type: 'image/png' });
+    const att = await addAttachment(db, note.id, blob, 'image/png', 'x.png');
+
+    await removeAttachment(db, note.id, att.id);
+
+    const reloaded = await getNote(db, note.id);
+    expect(reloaded.attachmentIds).not.toContain(att.id);
+    expect(await getAttachment(db, att.id)).toBeUndefined();
+  });
+
+  test('is a no-op when attachment is not linked to that note', async () => {
+    const note = await createNote(db);
+    await expect(removeAttachment(db, note.id, 'never-existed')).resolves.toBeUndefined();
   });
 });

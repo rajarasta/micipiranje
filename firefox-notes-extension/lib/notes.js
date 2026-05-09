@@ -1,4 +1,4 @@
-import { put, get, listByIndex } from './db.js';
+import { put, get, listByIndex, runTx, del } from './db.js';
 
 export async function createNote(db) {
   const now = Date.now();
@@ -40,4 +40,46 @@ export async function updateNote(db, id, patch) {
   };
   await put(db, 'notes', updated);
   return updated;
+}
+
+export function getAttachment(db, id) {
+  return get(db, 'attachments', id);
+}
+
+export async function addAttachment(db, noteId, blob, mimeType, filename) {
+  const note = await getNote(db, noteId);
+  if (!note) throw new Error(`Note not found: ${noteId}`);
+
+  const att = {
+    id: crypto.randomUUID(),
+    blob,
+    mimeType,
+    filename,
+    size: blob.size
+  };
+
+  await runTx(db, ['notes', 'attachments'], 'readwrite', (tx) => {
+    tx.objectStore('attachments').put(att);
+    tx.objectStore('notes').put({
+      ...note,
+      attachmentIds: [...note.attachmentIds, att.id],
+      updatedAt: Date.now()
+    });
+  });
+
+  return att;
+}
+
+export async function removeAttachment(db, noteId, attachmentId) {
+  const note = await getNote(db, noteId);
+  if (!note || !note.attachmentIds.includes(attachmentId)) return;
+
+  await runTx(db, ['notes', 'attachments'], 'readwrite', (tx) => {
+    tx.objectStore('attachments').delete(attachmentId);
+    tx.objectStore('notes').put({
+      ...note,
+      attachmentIds: note.attachmentIds.filter(id => id !== attachmentId),
+      updatedAt: Date.now()
+    });
+  });
 }
