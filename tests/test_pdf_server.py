@@ -1455,3 +1455,30 @@ def test_pdf_inspect_layout_compact_default(vector_drawing_pdf):
     # Hint format: "<n> drawings, <m> shapes".
     assert any(re.search(r"\d+ drawings, \d+ shapes", row) for row in drawing_rows), \
         f"no cluster hint found in: {drawing_rows!r}"
+
+
+def test_pdf_inspect_layout_verbose_keeps_old_format(vector_drawing_pdf):
+    """verbose=True must skip clustering and emit one row per raw drawing
+    with the old "<n> shapes" hint format. Regression for power users who
+    rely on per-path detail."""
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    out = pdf_server.pdf_inspect_layout(
+        vector_drawing_pdf.name, page=1, dpi=150, verbose=True,
+    )
+    drawing_rows = [line for line in out.splitlines() if "\tdrawing\t" in line]
+    # Fixture has 1 big rect + 60 small rects = 61 raw drawings; verbose
+    # should emit (close to) all of them, far more than compact mode.
+    assert len(drawing_rows) >= 50, (
+        f"verbose mode emitted only {len(drawing_rows)} drawings, "
+        "expected ~61 raw entries"
+    )
+    # Old hint format: "<n> shapes" with no "drawings," prefix.
+    for row in drawing_rows:
+        assert re.search(r"\b\d+ shapes\b", row), f"missing shape count in {row!r}"
+        assert "drawings," not in row, (
+            f"verbose row has cluster-style hint: {row!r}"
+        )
+    # Header should call out verbose mode.
+    assert "verbose" in out.splitlines()[1]
