@@ -211,6 +211,87 @@ def _to_tsv(rows: list[list], header_lines: list[str], max_chars: int = 50000) -
     return "\n".join(lines)
 
 
+def _cluster_drawings(
+    drawings: list[dict],
+    cluster_tolerance: int,
+    min_area: int,
+    max_drawings: int,
+) -> list[dict]:
+    """Cluster drawing dicts (each with `rect` and `items`) into macro regions.
+
+    Two drawings cluster together iff their rects overlap when each is
+    inflated by `cluster_tolerance` on every side. Filters degenerate rects
+    (zero width or height) before clustering and small-area clusters after.
+    Returns clusters sorted by union-bbox area descending, capped at
+    `max_drawings`.
+
+    Each output dict: {"rect": (x0,y0,x1,y1) tuple in PDF points,
+                       "n_drawings": int, "total_shapes": int}.
+    """
+    rects = []
+    shapes_per = []
+    for d in drawings:
+        r = d.get("rect")
+        if r is None:
+            continue
+        x0, y0, x1, y1 = float(r.x0), float(r.y0), float(r.x1), float(r.y1)
+        if x1 - x0 <= 0 or y1 - y0 <= 0:
+            continue
+        rects.append((x0, y0, x1, y1))
+        shapes_per.append(len(d.get("items") or []))
+    n = len(rects)
+    if n == 0:
+        return []
+
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    tol = cluster_tolerance
+    for i in range(n):
+        ix0, iy0, ix1, iy1 = rects[i]
+        for j in range(i + 1, n):
+            jx0, jy0, jx1, jy1 = rects[j]
+            if ix0 - tol <= jx1 and jx0 <= ix1 + tol and \
+               iy0 - tol <= jy1 and jy0 <= iy1 + tol:
+                union(i, j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    clusters = []
+    for members in groups.values():
+        x0 = min(rects[i][0] for i in members)
+        y0 = min(rects[i][1] for i in members)
+        x1 = max(rects[i][2] for i in members)
+        y1 = max(rects[i][3] for i in members)
+        area = (x1 - x0) * (y1 - y0)
+        if area < min_area:
+            continue
+        clusters.append({
+            "rect": (x0, y0, x1, y1),
+            "n_drawings": len(members),
+            "total_shapes": sum(shapes_per[i] for i in members),
+            "_area": area,
+        })
+
+    clusters.sort(key=lambda c: c["_area"], reverse=True)
+    clusters = clusters[:max_drawings]
+    for c in clusters:
+        del c["_area"]
+    return clusters
+
+
 def _extract_tables(pdf_path: Path) -> list[dict]:
     """Walk every page, return tables as a list of dicts.
 

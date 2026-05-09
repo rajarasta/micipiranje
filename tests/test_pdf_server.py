@@ -1272,3 +1272,37 @@ def test_extract_region_inline_image_dimensions(simple_text_pdf):
     # Allow ±2 px slack for PyMuPDF rounding behavior at clip edges.
     assert 198 <= width <= 202
     assert 198 <= height <= 202
+
+
+def _make_drawing(x0, y0, x1, y1, items_count=1):
+    """Test fixture: build a drawing dict shaped like p.get_drawings() output."""
+    import fitz
+    return {"rect": fitz.Rect(x0, y0, x1, y1), "items": [None] * items_count}
+
+
+def test_cluster_drawings_overlap_merges():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    a = _make_drawing(10, 10, 50, 50, items_count=3)
+    b = _make_drawing(40, 40, 90, 90, items_count=2)  # overlaps a
+    clusters = pdf_server._cluster_drawings(
+        [a, b], cluster_tolerance=0, min_area=0, max_drawings=10,
+    )
+    assert len(clusters) == 1
+    c = clusters[0]
+    assert c["rect"] == (10, 10, 90, 90)
+    assert c["n_drawings"] == 2
+    assert c["total_shapes"] == 5
+
+
+def test_cluster_drawings_disjoint_separate():
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    a = _make_drawing(10, 10, 50, 50)
+    b = _make_drawing(500, 500, 600, 600)  # far away
+    clusters = pdf_server._cluster_drawings(
+        [a, b], cluster_tolerance=8, min_area=0, max_drawings=10,
+    )
+    assert len(clusters) == 2
