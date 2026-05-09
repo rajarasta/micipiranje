@@ -21,20 +21,19 @@ export function screenshotFilename(mimeType, date = new Date()) {
 export function parsePaste(event) {
   const items = event.clipboardData?.items ?? [];
   for (const item of items) {
-    if (item.type && item.type.startsWith('image/')) {
-      event.preventDefault();
-      const blob = item.getAsFile();
-      if (!blob) return null;
-      if (blob.size > MAX_ATTACHMENT_BYTES) {
-        return { kind: 'rejected', reason: 'too-large', size: blob.size };
-      }
-      return {
-        kind: 'image',
-        blob,
-        mimeType: item.type,
-        filename: screenshotFilename(item.type)
-      };
+    if (!item.type || !item.type.startsWith('image/')) continue;
+    const blob = item.getAsFile();
+    if (!blob) continue;
+    event.preventDefault();
+    if (blob.size > MAX_ATTACHMENT_BYTES) {
+      return { kind: 'rejected', reason: 'too-large', size: blob.size };
     }
+    return {
+      kind: 'image',
+      blob,
+      mimeType: item.type,
+      filename: screenshotFilename(item.type)
+    };
   }
   return null;
 }

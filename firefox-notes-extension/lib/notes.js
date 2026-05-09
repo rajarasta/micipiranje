@@ -1,4 +1,4 @@
-import { put, get, listByIndex, runTx, del } from './db.js';
+import { put, get, listByIndex, runTx } from './db.js';
 
 export async function createNote(db) {
   const now = Date.now();

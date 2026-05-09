@@ -67,6 +67,12 @@ describe('screenshotFilename', () => {
   test('formats timestamp as YYYYMMDD-HHmmss', () => {
     const fixed = new Date('2026-05-09T14:30:22.000Z');
     const name = screenshotFilename('image/png', fixed);
-    expect(name).toMatch(/^screenshot-20260509-\d{6}\.png$/);
+    expect(name).toMatch(/^screenshot-\d{8}-\d{6}\.png$/);
+  });
+
+  test('uses local-time components of the provided date', () => {
+    const fixed = new Date(2026, 4, 9, 14, 30, 22); // May 9 2026, 14:30:22 LOCAL
+    const name = screenshotFilename('image/png', fixed);
+    expect(name).toBe('screenshot-20260509-143022.png');
   });
 });
