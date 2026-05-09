@@ -1,5 +1,5 @@
 import { openDb } from '../lib/db.js';
-import { createNote, listNotes, getNote, searchNotes } from '../lib/notes.js';
+import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote } from '../lib/notes.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -8,6 +8,9 @@ const state = {
   currentNoteId: null,
   searchQuery: ''
 };
+
+let bodyDebounceTimer = null;
+const BODY_DEBOUNCE_MS = 500;
 
 async function init() {
   state.db = await openDb();
@@ -18,7 +21,7 @@ async function init() {
 function bindStaticEvents() {
   $('#btn-new').addEventListener('click', onNewNoteClick);
   $('#search').addEventListener('input', onSearchInput);
-  $('#btn-back').addEventListener('click', () => showList());
+  $('#btn-back').addEventListener('click', () => { showList().catch(err => console.error('[notes]', err)); });
 }
 
 async function onNewNoteClick() {
@@ -70,19 +73,75 @@ function escapeHtml(str) {
     .replaceAll("'", '&#39;');
 }
 
-function openEditor(id) {
+async function openEditor(id) {
   state.currentNoteId = id;
+  const note = await getNote(state.db, id);
+  if (!note) {
+    showList();
+    return;
+  }
+  $('#editor-title').value = note.title;
+  $('#editor-body').value = note.body;
   $('#view-list').classList.add('hidden');
   $('#view-editor').classList.remove('hidden');
-  // Editor population happens in Task 12.
+  renderAttachments(note);
+  rebindEditorEvents();
+  $('#editor-title').focus();
 }
 
-function showList() {
+function rebindEditorEvents() {
+  const title = $('#editor-title');
+  const body = $('#editor-body');
+  title.oninput = null;
+  title.onblur = onTitleBlur;
+  body.oninput = onBodyInput;
+}
+
+async function onTitleBlur() {
+  if (!state.currentNoteId) return;
+  await updateNote(state.db, state.currentNoteId, { title: $('#editor-title').value });
+}
+
+function onBodyInput() {
+  if (bodyDebounceTimer) clearTimeout(bodyDebounceTimer);
+  bodyDebounceTimer = setTimeout(flushBody, BODY_DEBOUNCE_MS);
+}
+
+async function flushBody() {
+  if (bodyDebounceTimer) {
+    clearTimeout(bodyDebounceTimer);
+    bodyDebounceTimer = null;
+  }
+  if (!state.currentNoteId) return;
+  await updateNote(state.db, state.currentNoteId, { body: $('#editor-body').value });
+}
+
+async function flushAndPrune() {
+  if (!state.currentNoteId) return;
+  await flushBody();
+  await updateNote(state.db, state.currentNoteId, { title: $('#editor-title').value });
+
+  const note = await getNote(state.db, state.currentNoteId);
+  if (note && !note.title.trim() && !note.body.trim() && note.attachmentIds.length === 0) {
+    await deleteNote(state.db, state.currentNoteId);
+  }
+}
+
+function renderAttachments(note) {
+  $('#attachment-list').innerHTML = '';
+}
+
+async function showList() {
+  await flushAndPrune();
   state.currentNoteId = null;
   $('#view-editor').classList.add('hidden');
   $('#view-list').classList.remove('hidden');
-  renderList();
+  await renderList();
 }
+
+window.addEventListener('pagehide', () => {
+  flushAndPrune().catch(err => console.error('[notes] flush on hide failed', err));
+});
 
 init().catch(err => {
   console.error('[notes] init failed', err);
