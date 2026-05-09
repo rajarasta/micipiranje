@@ -1447,8 +1447,10 @@ def test_pdf_inspect_layout_compact_default(vector_drawing_pdf):
     assert "drawing cluster" in out, f"missing cluster header in: {out[:200]!r}"
     # Drawing rows should be far fewer than the 61 raw drawings.
     drawing_rows = [line for line in out.splitlines() if "\tdrawing\t" in line]
-    assert len(drawing_rows) < 15, (
-        f"compact mode emitted {len(drawing_rows)} drawing rows, expected <15"
+    # Fixture produces exactly 6 clusters (1 big + 5 group clusters); allow
+    # 2 slack for any PyMuPDF version variance in how draw_rect is split.
+    assert len(drawing_rows) <= 8, (
+        f"compact mode emitted {len(drawing_rows)} drawing rows, expected ~6"
     )
     # Hint format: "<n> drawings, <m> shapes".
     assert any(re.search(r"\d+ drawings, \d+ shapes", row) for row in drawing_rows), \
