@@ -18,6 +18,7 @@ LM_MCP_ROOT. See docs/superpowers/specs/2026-05-07-pdf-mcp-design.md.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -103,8 +104,21 @@ def _extracts_dir() -> Path:
 
 
 def _cache_key(target: Path) -> str:
+    # Sanitize the filename to ASCII so the cache key (and the /files URL it
+    # ends up in) is safe to copy through models that mis-transcribe non-ASCII
+    # chars — e.g. Qwen3.5 9B turning Croatian "ž" (U+017E, %C5%BE) into "Ž"
+    # (U+017D, %C5%BD), which 404s the route handler. ASCII-only filenames
+    # keep their exact name (preserves backward compat); non-ASCII filenames
+    # get unsafe chars replaced with "_" and a short hash appended for
+    # collision safety.
     st = target.stat()
-    return f"{target.name}__{st.st_size}__{st.st_mtime_ns}"
+    name = target.name
+    safe = "".join(c if (c.isascii() and (c.isalnum() or c in "._-")) else "_" for c in name)
+    safe = re.sub(r"_+", "_", safe).strip("_")
+    if safe != name:
+        digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+        safe = f"{safe}__{digest}"
+    return f"{safe}__{st.st_size}__{st.st_mtime_ns}"
 
 
 def _cache_path(target: Path) -> Path:

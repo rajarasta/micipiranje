@@ -77,6 +77,29 @@ def test_render_cache_path(simple_text_pdf):
     assert p.suffix == ".png"
 
 
+def test_cache_key_is_ascii_for_non_ascii_filename(sandbox):
+    """Cache keys (and the /files URLs they end up in) must be ASCII-only,
+    so models that mis-transcribe non-ASCII chars (e.g. Croatian ž→Ž) can
+    still copy the URL into chat without 404s. Regression for the broken
+    /files/renders/...monta%C5%BDni... bug.
+    """
+    import importlib
+    import pdf_server
+    importlib.reload(pdf_server)
+    pdf = sandbox / "RN ZZJZ - montažni fasada - 5.01 Sjever.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    key = pdf_server._cache_key(pdf)
+    assert key.isascii(), f"cache key contains non-ASCII chars: {key!r}"
+    # Also check the rendered cache filename — what actually goes into the URL.
+    rp = pdf_server._render_cache_path(pdf, page=4, dpi=150)
+    assert rp.name.isascii(), f"render cache filename has non-ASCII: {rp.name!r}"
+    # Sanity: distinct non-ASCII filenames must produce distinct keys (the
+    # short hash suffix guarantees this even when sanitized stems collide).
+    other = sandbox / "RN ZZJZ - montaŽni fasada - 5.01 Sjever.pdf"  # capital Ž
+    other.write_bytes(b"%PDF-1.4 fake")
+    assert pdf_server._cache_key(pdf) != pdf_server._cache_key(other)
+
+
 def test_cache_read_miss(simple_text_pdf):
     import importlib
     import pdf_server
