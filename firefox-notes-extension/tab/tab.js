@@ -51,11 +51,125 @@ async function refreshNotes() {
 }
 
 function renderSidebar() {
-  // Implemented in Task E2.
   $('#side-count').textContent = state.notes.length === 0 ? '' : `${state.notes.length}`;
-  // For now, render empty containers so the layout renders without errors.
-  $('#side-filters').innerHTML = '';
-  $('#side-list').innerHTML = '';
+  renderFilters();
+  renderSidebarList();
+}
+
+function renderFilters() {
+  const tags = derivedTagFilters(state.notes, 4);
+  const div = $('#side-filters');
+  div.innerHTML = '';
+  for (const t of tags) {
+    const btn = document.createElement('button');
+    btn.className = 'chip mono' + (state.filterTag === t ? ' active' : '');
+    btn.type = 'button';
+    btn.textContent = t === 'Sve' ? 'Sve' : t;
+    btn.addEventListener('click', () => {
+      state.filterTag = t;
+      renderFilters();
+      renderSidebarList();
+    });
+    div.appendChild(btn);
+  }
+}
+
+function renderSidebarList() {
+  const filtered = state.notes.filter(n => {
+    if (state.filterTag !== 'Sve') {
+      if (!n.tags || !n.tags.includes(state.filterTag)) return false;
+    }
+    if (state.search) {
+      const q = state.search.toLowerCase();
+      if (!n.body || !n.body.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const ul = $('#side-list');
+  ul.innerHTML = '';
+
+  if (filtered.length === 0) {
+    const p = document.createElement('div');
+    p.className = 'empty muted';
+    p.style.padding = '12px 14px';
+    p.textContent = state.search ? 'Nema rezultata.' : 'Nema bilješki.';
+    ul.appendChild(p);
+    return;
+  }
+
+  // Release previous row thumb URLs
+  releaseRowObjectUrls();
+
+  const groups = groupNotesByDate(filtered);
+  for (const group of groups) {
+    const h = document.createElement('div');
+    h.className = 'group-head';
+    h.innerHTML = `<span class="section-label mono">${escapeHtml(group.label)}</span><span class="mono muted">${group.notes.length}</span>`;
+    ul.appendChild(h);
+    for (const n of group.notes) {
+      ul.appendChild(buildSidebarRow(n));
+    }
+  }
+}
+
+const objectUrls = new Map();
+
+function releaseRowObjectUrls() {
+  for (const [k, url] of objectUrls.entries()) {
+    if (k.startsWith('row-')) { URL.revokeObjectURL(url); objectUrls.delete(k); }
+  }
+}
+
+function buildSidebarRow(n) {
+  const row = document.createElement('div');
+  row.className = 'b-row' + (state.activeNoteId === n.id ? ' active' : '');
+  row.dataset.id = n.id;
+
+  const thumb = document.createElement('div');
+  thumb.className = 'thumb';
+  // For tab sidebar, defer thumbnail load (DB round-trip) — start with icon, async upgrade if image
+  if (n.attachmentIds && n.attachmentIds.length) {
+    thumb.innerHTML = `<span data-icon="image"></span>`;
+    upgradeRowThumb(n, thumb).catch(() => {});
+  } else {
+    thumb.innerHTML = `<span data-icon="list"></span>`;
+  }
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  const preview = (n.body || '').slice(0, 80);
+  const ageMs = Date.now() - n.updatedAt;
+  body.innerHTML = `
+    <div class="preview">${escapeHtml(preview) || '<em class="muted">(prazna)</em>'}</div>
+    <div class="meta mono muted">${formatAge(ageMs)} · ${n.body ? n.body.length : 0} zn.</div>
+  `;
+
+  const right = document.createElement('div');
+  right.className = 'right';
+  right.innerHTML = `
+    <span class="age mono muted">${formatAge(ageMs)}</span>
+    ${n.attachmentIds && n.attachmentIds.length ? `<span class="att-pill mono"><span data-icon="paperclip"></span> ${n.attachmentIds.length}</span>` : ''}
+  `;
+
+  row.append(thumb, body, right);
+  row.addEventListener('click', () => openNote(n.id));
+
+  injectIcons(row);
+  return row;
+}
+
+async function upgradeRowThumb(n, thumbEl) {
+  for (const id of n.attachmentIds || []) {
+    const a = await getAttachment(state.db, id);
+    if (a && a.mimeType && a.mimeType.startsWith('image/')) {
+      const blob = a.thumbBlob instanceof Blob ? a.thumbBlob : a.blob;
+      const url = URL.createObjectURL(blob);
+      objectUrls.set(`row-${n.id}`, url);
+      thumbEl.innerHTML = `<img src="${url}" alt="">`;
+      return;
+    }
+  }
 }
 
 function renderEditor() {
@@ -71,7 +185,43 @@ function renderRight() {
 }
 
 function bindEvents() {
-  // Implemented in Task E2.
+  $('#side-new').addEventListener('click', () => createAndOpen().catch(err => console.error('[notes]', err)));
+  $('#side-search').addEventListener('input', (e) => {
+    state.search = e.target.value;
+    renderSidebar();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const k = e.key;
+    const ctrl = e.metaKey || e.ctrlKey;
+    if (ctrl && k.toLowerCase() === 'k') { e.preventDefault(); $('#side-search').focus(); return; }
+    if (ctrl && k.toLowerCase() === 'n' && !isTypingInTextarea(e.target)) { e.preventDefault(); createAndOpen(); return; }
+    if (k === 'Escape') {
+      // Close any open modal
+      for (const m of document.querySelectorAll('.modal:not(.hidden)')) m.classList.add('hidden');
+    }
+  });
+}
+
+function isTypingInTextarea(target) {
+  return target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
+}
+
+async function createAndOpen() {
+  const note = await createNote(state.db);
+  await refreshNotes();
+  await openNote(note.id);
+  renderSidebar();
+}
+
+async function openNote(id) {
+  state.activeNoteId = id;
+  renderEditor();
+  renderRight();
+  // Update active class on sidebar rows
+  for (const row of document.querySelectorAll('#side-list .b-row')) {
+    row.classList.toggle('active', row.dataset.id === id);
+  }
 }
 
 async function init() {
