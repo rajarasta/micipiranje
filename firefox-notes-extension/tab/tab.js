@@ -18,7 +18,8 @@ const state = {
   filterTag: 'Sve',
   notes: [],
   saveState: 'idle',
-  lastSavedAt: 0
+  lastSavedAt: 0,
+  currentMatchIndex: -1
 };
 
 function injectIcons(root = document) {
@@ -218,6 +219,11 @@ async function renderEditor() {
       : escapeHtml(r.text)
     ).join('');
     doc.appendChild(pre);
+    // Reset match cursor on each render
+    state.currentMatchIndex = -1;
+    // If there are matches, focus the first
+    const marks = pre.querySelectorAll('mark');
+    if (marks.length > 0) stepMatch(+1);
   } else {
     const ta = document.createElement('textarea');
     ta.id = 'body-textarea';
@@ -234,6 +240,20 @@ async function renderEditor() {
   renderFootSave();
   $('#foot-chars').textContent = `${(note.body || '').length} zn.`;
   $('#foot-atts').textContent = `${note.attachmentIds.length} privitka${note.attachmentIds.length === 1 ? '' : ''}`;
+}
+
+function stepMatch(delta) {
+  const marks = document.querySelectorAll('#doc .body-pre mark');
+  if (marks.length === 0) return;
+  // Clear previous
+  marks.forEach(m => m.classList.remove('current'));
+  let idx = state.currentMatchIndex + delta;
+  if (idx >= marks.length) idx = 0;
+  if (idx < 0) idx = marks.length - 1;
+  state.currentMatchIndex = idx;
+  const m = marks[idx];
+  m.classList.add('current');
+  m.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 function renderFootSave() {
@@ -462,9 +482,17 @@ function bindEvents() {
     const ctrl = e.metaKey || e.ctrlKey;
     if (ctrl && k.toLowerCase() === 'k') { e.preventDefault(); $('#side-search').focus(); return; }
     if (ctrl && k.toLowerCase() === 'n' && !isTypingInTextarea(e.target)) { e.preventDefault(); createAndOpen(); return; }
+    if (state.searchInDoc && (k === 'ArrowDown' || k === 'ArrowUp')) {
+      e.preventDefault();
+      stepMatch(k === 'ArrowDown' ? +1 : -1);
+      return;
+    }
     if (k === 'Escape') {
       // Close any open modal
-      for (const m of document.querySelectorAll('.modal:not(.hidden)')) m.classList.add('hidden');
+      for (const m of document.querySelectorAll('.modal:not(.hidden)')) {
+        m.classList.add('hidden');
+        if (m.id !== 'modal-img') m.innerHTML = '';
+      }
     }
   });
 

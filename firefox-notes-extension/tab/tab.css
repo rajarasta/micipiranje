@@ -389,6 +389,11 @@ body {
   margin: 0;
   color: var(--ink);
 }
+.doc .body-pre mark.current {
+  background: oklch(82% 0.16 90);
+  outline: 1px solid oklch(70% 0.18 80);
+  outline-offset: 1px;
+}
 .doc .meta-line .t {
   background: var(--tag-bg);
   color: var(--tag);
