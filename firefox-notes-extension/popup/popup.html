@@ -3,41 +3,84 @@
 <head>
   <meta charset="UTF-8">
   <title>Bilješke</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main id="app">
-    <!-- LIST VIEW -->
-    <section id="view-list" class="view">
-      <header class="bar">
+  <main id="app" class="b-popup">
+
+    <!-- LAUNCHER VIEW -->
+    <section id="view-launcher" class="view">
+      <header class="lh-head">
         <h1>Bilješke</h1>
-        <button id="btn-new" type="button">+ Nova</button>
+        <span id="launcher-stats" class="mono muted"></span>
+      </header>
+      <div class="lh-hero">
+        <button id="hero-new" class="big" type="button">
+          <span class="glyph" data-icon="plus"></span>
+          <span class="copy">
+            <span class="label">Nova bilješka</span>
+            <span class="sub mono">Zalijepi tekst ili sliku</span>
+          </span>
+          <kbd class="kbd">⌘N</kbd>
+        </button>
+        <div class="row2">
+          <button id="hero-list" class="sm" type="button">
+            <span data-icon="list"></span>
+            <span>Sve bilješke</span>
+          </button>
+          <button id="hero-tab" class="sm" type="button">
+            <span data-icon="externalLink"></span>
+            <span>Otvori karticu</span>
+          </button>
+        </div>
+      </div>
+      <h2 class="section-label mono">NEDAVNO</h2>
+      <ul id="launcher-recents" class="recent-list"></ul>
+    </section>
+
+    <!-- LIST VIEW -->
+    <section id="view-list" class="view hidden">
+      <header class="bar">
+        <div class="bar-titles">
+          <h1>Bilješke</h1>
+          <span id="list-substats" class="mono muted">— bilješki · auto-spremanje</span>
+        </div>
+        <button id="btn-new" class="btn primary" type="button"><span data-icon="plus"></span> Nova</button>
       </header>
       <div class="search-row">
-        <input id="search" type="search" placeholder="🔍 Pretraži bilješke…" autocomplete="off">
+        <span class="search-icon" data-icon="search"></span>
+        <input id="search" type="search" placeholder="Pretraži bilješke…" autocomplete="off">
       </div>
-      <ul id="note-list" class="note-list"></ul>
-      <p id="empty-list" class="empty">Još nema bilješki.</p>
+      <div id="note-list" class="note-list"></div>
+      <p id="empty-list" class="empty hidden">
+        <span class="empty-icon" data-icon="bracket"></span>
+        <span class="empty-title">Nema bilješki</span>
+        <span class="empty-sub">Zalijepi tekst ili sliku za novu</span>
+      </p>
     </section>
 
     <!-- EDITOR VIEW -->
     <section id="view-editor" class="view hidden">
-      <header class="bar">
-        <button id="btn-back" type="button">← Natrag</button>
-        <button id="btn-delete" type="button" class="danger">Obriši</button>
+      <header class="bar editor-bar">
+        <button id="btn-back" class="btn ghost" type="button">← Natrag</button>
+        <div class="save-state mono muted" id="save-state">
+          <span class="dot"></span><span class="label">Spremljeno</span>
+        </div>
+        <button id="btn-more" class="btn ghost icon" type="button" data-icon="more" aria-label="Više"></button>
+        <button id="btn-delete" class="btn ghost danger icon" type="button" data-icon="trash" aria-label="Obriši"></button>
       </header>
-      <input id="editor-title" type="text" placeholder="Naslov…" maxlength="200">
-      <textarea id="editor-body" placeholder="Tekst bilješke…"></textarea>
-      <section class="attachments">
-        <h2>Privitci</h2>
-        <ul id="attachment-list"></ul>
-      </section>
+      <textarea id="editor-body" placeholder="Bilješka…"></textarea>
+      <footer class="att-foot" id="att-foot">
+        <span class="section-label mono"><span class="att-count-label">PRIVITCI</span></span>
+        <div id="attachment-list" class="att-chips"></div>
+        <button id="btn-add-att" class="btn ghost" type="button">+ Dodaj</button>
+        <input id="file-input" type="file" accept="image/*,application/pdf" hidden>
+      </footer>
     </section>
 
-    <!-- TOAST -->
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-    <!-- IMAGE PREVIEW MODAL -->
     <div id="modal" class="modal hidden">
       <img id="modal-img" alt="Pregled privitka">
     </div>
