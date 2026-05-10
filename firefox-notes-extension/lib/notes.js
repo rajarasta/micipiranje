@@ -1,4 +1,5 @@
 import { put, get, listByIndex, runTx } from './db.js';
+import { generateThumbnail } from './thumbnail.js';
 
 export async function createNote(db) {
   const now = Date.now();
@@ -55,12 +56,22 @@ export async function addAttachment(db, noteId, blob, mimeType, filename) {
   const note = await getNote(db, noteId);
   if (!note) throw new Error(`Note not found: ${noteId}`);
 
+  let thumbBlob = null;
+  if (mimeType && mimeType.startsWith('image/')) {
+    try {
+      thumbBlob = await generateThumbnail(blob, 72);
+    } catch (err) {
+      console.warn('[notes] thumbnail generation failed', err);
+    }
+  }
+
   const att = {
     id: crypto.randomUUID(),
     blob,
     mimeType,
     filename,
-    size: blob.size
+    size: blob.size,
+    thumbBlob
   };
 
   await runTx(db, ['notes', 'attachments'], 'readwrite', (tx) => {

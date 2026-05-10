@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { openDb, DB_NAME } from '../lib/db.js';
 import { createNote, getNote, listNotes, updateNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
 import { deleteNote, searchNotes } from '../lib/notes.js';
@@ -271,5 +272,69 @@ describe('legacy record defaults', () => {
     const found = list.find(n => n.id === id);
     expect(found.pinned).toBe(false);
     expect(found.tags).toEqual([]);
+  });
+});
+
+describe('addAttachment thumbnail integration', () => {
+  let originalCreateImageBitmap;
+  let originalOffscreenCanvas;
+
+  beforeEach(() => {
+    originalCreateImageBitmap = globalThis.createImageBitmap;
+    originalOffscreenCanvas = globalThis.OffscreenCanvas;
+
+    globalThis.createImageBitmap = async () => ({
+      width: 200, height: 100, close: () => {}
+    });
+    globalThis.OffscreenCanvas = class {
+      constructor(w, h) { this.width = w; this.height = h; }
+      getContext() { return { fillStyle: '', fillRect() {}, drawImage() {} }; }
+      async convertToBlob({ type } = {}) {
+        return new Blob([new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0d])], { type: type || 'image/png' });
+      }
+    };
+  });
+
+  afterEach(() => {
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    globalThis.OffscreenCanvas = originalOffscreenCanvas;
+  });
+
+  test('image attachment gets a thumbBlob', async () => {
+    const note = await createNote(db);
+    const blob = new Blob(['fake-png-bytes'], { type: 'image/png' });
+    const att = await addAttachment(db, note.id, blob, 'image/png', 'photo.png');
+
+    expect(att.thumbBlob).toBeInstanceOf(Blob);
+    expect(att.thumbBlob.type).toBe('image/png');
+    expect(att.thumbBlob.size).toBeGreaterThan(0);
+
+    // The persisted attachment also has the thumb
+    const stored = await getAttachment(db, att.id);
+    expect(stored.thumbBlob).toBeInstanceOf(Blob);
+  });
+
+  test('non-image attachment has thumbBlob: null', async () => {
+    const note = await createNote(db);
+    const blob = new Blob(['%PDF-1.4'], { type: 'application/pdf' });
+    const att = await addAttachment(db, note.id, blob, 'application/pdf', 'doc.pdf');
+    expect(att.thumbBlob).toBeNull();
+    const stored = await getAttachment(db, att.id);
+    expect(stored.thumbBlob).toBeNull();
+  });
+
+  test('thumbnail generation failure does not fail addAttachment', async () => {
+    // Force thumbnail to throw
+    globalThis.createImageBitmap = async () => { throw new Error('decode failed'); };
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const note = await createNote(db);
+    const blob = new Blob(['fake'], { type: 'image/jpeg' });
+    const att = await addAttachment(db, note.id, blob, 'image/jpeg', 'broken.jpg');
+
+    expect(att).toBeDefined();
+    expect(att.thumbBlob).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
