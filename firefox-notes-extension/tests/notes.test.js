@@ -1,6 +1,8 @@
 import { openDb, DB_NAME } from '../lib/db.js';
 import { createNote, getNote, listNotes, updateNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
 import { deleteNote, searchNotes } from '../lib/notes.js';
+import { togglePin, setTags } from '../lib/notes.js';
+import { put } from '../lib/db.js';
 
 let db;
 
@@ -197,5 +199,77 @@ describe('searchNotes', () => {
 
     const results = await searchNotes(db, 'foo');
     expect(results.map(n => n.id)).toEqual([b.id, a.id]);
+  });
+});
+
+describe('togglePin', () => {
+  test('flips pinned and bumps updatedAt', async () => {
+    const note = await createNote(db);
+    expect(note.pinned).toBe(false);
+    await new Promise(r => setTimeout(r, 2));
+    const after = await togglePin(db, note.id);
+    expect(after.pinned).toBe(true);
+    expect(after.updatedAt).toBeGreaterThan(note.updatedAt);
+    const after2 = await togglePin(db, note.id);
+    expect(after2.pinned).toBe(false);
+  });
+
+  test('throws on missing id', async () => {
+    await expect(togglePin(db, 'missing')).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('setTags', () => {
+  test('lowercases, trims, and dedupes tags', async () => {
+    const note = await createNote(db);
+    const after = await setTags(db, note.id, ['Posao', '  POSAO ', 'Dizajn']);
+    expect(after.tags).toEqual(['posao', 'dizajn']);
+    expect(after.updatedAt).toBeGreaterThanOrEqual(note.updatedAt);
+  });
+
+  test('drops empty strings', async () => {
+    const note = await createNote(db);
+    const after = await setTags(db, note.id, ['x', '', '   ', 'y']);
+    expect(after.tags).toEqual(['x', 'y']);
+  });
+
+  test('empty array clears tags', async () => {
+    const note = await createNote(db);
+    await setTags(db, note.id, ['x']);
+    const cleared = await setTags(db, note.id, []);
+    expect(cleared.tags).toEqual([]);
+  });
+
+  test('throws on missing id', async () => {
+    await expect(setTags(db, 'missing', ['x'])).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('createNote returns pinned:false and tags:[]', () => {
+  test('default fields present on new note', async () => {
+    const note = await createNote(db);
+    expect(note.pinned).toBe(false);
+    expect(note.tags).toEqual([]);
+  });
+});
+
+describe('legacy record defaults', () => {
+  test('getNote returns pinned:false and tags:[] when absent', async () => {
+    const id = crypto.randomUUID();
+    const legacy = { id, title: '', body: 'old', attachmentIds: [], createdAt: 1, updatedAt: 1 };
+    await put(db, 'notes', legacy);
+    const got = await getNote(db, id);
+    expect(got.pinned).toBe(false);
+    expect(got.tags).toEqual([]);
+  });
+
+  test('listNotes also defaults missing fields on legacy records', async () => {
+    const id = crypto.randomUUID();
+    const legacy = { id, title: '', body: 'old', attachmentIds: [], createdAt: 1, updatedAt: 1 };
+    await put(db, 'notes', legacy);
+    const list = await listNotes(db);
+    const found = list.find(n => n.id === id);
+    expect(found.pinned).toBe(false);
+    expect(found.tags).toEqual([]);
   });
 });

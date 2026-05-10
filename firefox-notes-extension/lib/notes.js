@@ -7,6 +7,8 @@ export async function createNote(db) {
     title: '',
     body: '',
     attachmentIds: [],
+    pinned: false,
+    tags: [],
     createdAt: now,
     updatedAt: now
   };
@@ -14,12 +16,15 @@ export async function createNote(db) {
   return note;
 }
 
-export function getNote(db, id) {
-  return get(db, 'notes', id);
+export async function getNote(db, id) {
+  const raw = await get(db, 'notes', id);
+  if (!raw) return raw;
+  return { pinned: false, tags: [], ...raw };
 }
 
-export function listNotes(db) {
-  return listByIndex(db, 'notes', 'updatedAt', 'prev');
+export async function listNotes(db) {
+  const rows = await listByIndex(db, 'notes', 'updatedAt', 'prev');
+  return rows.map(r => ({ pinned: false, tags: [], ...r }));
 }
 
 const ALLOWED_UPDATE_FIELDS = ['title', 'body'];
@@ -105,4 +110,25 @@ export async function searchNotes(db, query) {
     n.title.toLowerCase().includes(needle) ||
     n.body.toLowerCase().includes(needle)
   );
+}
+
+export async function togglePin(db, id) {
+  const existing = await getNote(db, id);
+  if (!existing) throw new Error(`Note not found: ${id}`);
+  const updated = { ...existing, pinned: !existing.pinned, updatedAt: Date.now() };
+  await put(db, 'notes', updated);
+  return updated;
+}
+
+export async function setTags(db, id, tags) {
+  const existing = await getNote(db, id);
+  if (!existing) throw new Error(`Note not found: ${id}`);
+  const normalized = Array.from(new Set(
+    (tags || [])
+      .map(t => String(t).toLowerCase().trim())
+      .filter(Boolean)
+  ));
+  const updated = { ...existing, tags: normalized, updatedAt: Date.now() };
+  await put(db, 'notes', updated);
+  return updated;
 }
