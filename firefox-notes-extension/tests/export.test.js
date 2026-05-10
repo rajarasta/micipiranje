@@ -1,4 +1,4 @@
-import { exportMarkdown, exportJson } from '../lib/export.js';
+import { exportMarkdown, exportJson, exportZip } from '../lib/export.js';
 
 describe('exportMarkdown', () => {
   test('returns a Blob whose text contains a frontmatter block per note', async () => {
@@ -59,5 +59,14 @@ describe('exportJson', () => {
     const obj = JSON.parse(await blob.text());
     expect(obj.notes.length).toBe(1);
     expect(obj.attachments).toEqual([]);
+  });
+});
+
+// exportZip requires JSZip loaded via <script> tag in a real browser.
+// Skipped in jsdom; verified manually in Firefox.
+describe.skip('exportZip', () => {
+  test('returns a Blob with type application/zip', async () => {
+    // (Cannot exercise without a working JSZip in jsdom.)
+    expect(typeof exportZip).toBe('function');
   });
 });

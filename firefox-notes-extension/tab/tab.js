@@ -6,7 +6,7 @@ import {
 import { groupNotesByDate } from '../lib/grouping.js';
 import { derivedTagFilters } from '../lib/tags.js';
 import { splitMatches } from '../lib/search.js';
-import { exportMarkdown, exportJson } from '../lib/export.js';
+import { exportMarkdown, exportJson, exportZip } from '../lib/export.js';
 import { iconHtml } from '../popup/icons.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -523,9 +523,9 @@ async function openExportModal() {
             <span class="fmt mono">.json</span>
             <span class="desc muted">Strukturirani export — bilješke + privitci kao base64. Pogodno za backup.</span>
           </button>
-          <button class="export-card disabled" data-fmt="zip" type="button" disabled>
+          <button class="export-card" data-fmt="zip" type="button">
             <span class="fmt mono">.zip</span>
-            <span class="desc muted">Markdown + originalni privitci. (Dolazi uskoro.)</span>
+            <span class="desc muted">Markdown + originalni privitci u attachments/ folderu.</span>
           </button>
         </div>
         <div class="export-status">
@@ -550,18 +550,31 @@ async function openExportModal() {
   modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 
   $('#export-download').addEventListener('click', async () => {
-    let blob, filename;
-    if (chosen === 'md') {
-      blob = exportMarkdown(notes);
-      filename = `biljeske-${todayStamp()}.md`;
-    } else if (chosen === 'json') {
-      blob = await exportJson(notes, attsByNote);
-      filename = `biljeske-${todayStamp()}.json`;
-    } else {
-      return;
+    const dl = $('#export-download');
+    const orig = dl.textContent;
+    dl.disabled = true;
+    try {
+      let blob, filename;
+      if (chosen === 'md') {
+        blob = exportMarkdown(notes);
+        filename = `biljeske-${todayStamp()}.md`;
+      } else if (chosen === 'json') {
+        blob = await exportJson(notes, attsByNote);
+        filename = `biljeske-${todayStamp()}.json`;
+      } else if (chosen === 'zip') {
+        dl.textContent = 'Pakiranje…';
+        blob = await exportZip(notes, attsByNote);
+        filename = `biljeske-${todayStamp()}.zip`;
+      }
+      triggerDownload(blob, filename);
+      showToast('Preuzimanje pokrenuto');
+    } catch (err) {
+      console.error('[notes] export', err);
+      showToast(`Greška pri izvozu: ${err.message}`, 'error');
+    } finally {
+      dl.disabled = false;
+      dl.textContent = orig;
     }
-    triggerDownload(blob, filename);
-    showToast('Preuzimanje pokrenuto');
   });
 }
 
