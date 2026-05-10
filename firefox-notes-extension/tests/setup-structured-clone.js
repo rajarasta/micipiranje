@@ -60,3 +60,29 @@ if (typeof globalThis.crypto !== 'object' || typeof globalThis.crypto.randomUUID
     globalThis.crypto.randomUUID = randomUUID;
   }
 }
+
+// jsdom's Blob lacks .text() / .arrayBuffer(). Polyfill them via FileReader so
+// export tests (and any future code path that round-trips Blob -> text/bytes)
+// work in the test environment.
+if (typeof Blob !== 'undefined') {
+  if (typeof Blob.prototype.text !== 'function') {
+    Blob.prototype.text = function () {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result || ''));
+        fr.onerror = () => reject(fr.error);
+        fr.readAsText(this);
+      });
+    };
+  }
+  if (typeof Blob.prototype.arrayBuffer !== 'function') {
+    Blob.prototype.arrayBuffer = function () {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsArrayBuffer(this);
+      });
+    };
+  }
+}
