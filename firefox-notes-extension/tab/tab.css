@@ -374,11 +374,35 @@ body {
   white-space: pre-wrap;
 }
 .doc .body-textarea mark,
-.doc .body mark {
+.doc .body mark,
+.doc .body-pre mark {
   background: var(--hi);
   color: inherit;
   padding: 1px 2px;
   border-radius: 2px;
+}
+.doc .body-pre {
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 15.5px;
+  line-height: 1.65;
+  margin: 0;
+  color: var(--ink);
+}
+.doc .meta-line .t {
+  background: var(--tag-bg);
+  color: var(--tag);
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin: 0 4px;
+}
+.tb-main .crumbs .path .ink {
+  color: var(--ink);
+  font-weight: 500;
+}
+.tb-main .crumbs .path .sep-slash {
+  color: var(--muted);
+  margin: 0 4px;
 }
 .doc .inline-att {
   margin: 18px 0;

@@ -172,10 +172,117 @@ async function upgradeRowThumb(n, thumbEl) {
   }
 }
 
-function renderEditor() {
-  // Implemented in Task E3.
-  if (!state.activeNoteId) return;
+let bodyDebounceTimer = null;
+const BODY_DEBOUNCE_MS = 500;
+
+async function renderEditor() {
+  const doc = $('#doc');
+  const path = $('#crumb-path');
+
+  if (!state.activeNoteId) {
+    doc.innerHTML = '<div class="empty muted">Odaberi bilješku iz lijevog popisa.</div>';
+    path.textContent = 'Bilješke';
+    $('#foot-save').textContent = '';
+    $('#foot-chars').textContent = '';
+    $('#foot-atts').textContent = '';
+    return;
+  }
+
+  const note = await getNote(state.db, state.activeNoteId);
+  if (!note) {
+    state.activeNoteId = null;
+    return renderEditor();
+  }
+
+  // Crumbs
+  const head = (note.body || '').slice(0, 32);
+  path.innerHTML = `Bilješke <span class="sep-slash"> / </span> <strong class="ink">${escapeHtml(head)}${note.body && note.body.length > 32 ? '…' : ''}</strong>`;
+
+  // Body
+  doc.innerHTML = '';
+
+  // Meta line
+  const meta = document.createElement('div');
+  meta.className = 'meta-line mono muted';
+  const paragraphs = (note.body || '').split(/\n{2,}/).filter(Boolean).length;
+  const tagPills = (note.tags || []).map(t => `<span class="t mono">${escapeHtml(t)}</span>`).join(' ');
+  meta.innerHTML = `Uređeno ${formatAge(Date.now() - note.updatedAt)} ${tagPills} · ${(note.body || '').length} znakova · ${paragraphs} odlomaka`;
+  doc.appendChild(meta);
+
+  if (state.searchInDoc && state.search) {
+    const pre = document.createElement('pre');
+    pre.className = 'body-pre';
+    const runs = splitMatches(note.body || '', state.search);
+    pre.innerHTML = runs.map(r => r.hi
+      ? `<mark>${escapeHtml(r.text)}</mark>`
+      : escapeHtml(r.text)
+    ).join('');
+    doc.appendChild(pre);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.id = 'body-textarea';
+    ta.className = 'body-textarea';
+    ta.value = note.body || '';
+    ta.placeholder = 'Bilješka…';
+    ta.addEventListener('input', onBodyInput);
+    doc.appendChild(ta);
+  }
+
+  // Footer
+  state.lastSavedAt = note.updatedAt;
+  state.saveState = 'saved';
+  renderFootSave();
+  $('#foot-chars').textContent = `${(note.body || '').length} zn.`;
+  $('#foot-atts').textContent = `${note.attachmentIds.length} privitka${note.attachmentIds.length === 1 ? '' : ''}`;
 }
+
+function renderFootSave() {
+  const el = $('#foot-save');
+  if (!el) return;
+  if (state.saveState === 'saving') {
+    el.textContent = 'Sprema se…';
+  } else if (state.saveState === 'error') {
+    el.textContent = 'Greška spremanja';
+  } else if (state.lastSavedAt) {
+    el.textContent = `Spremljeno · ${formatAge(Date.now() - state.lastSavedAt)}`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function onBodyInput() {
+  if (bodyDebounceTimer) clearTimeout(bodyDebounceTimer);
+  bodyDebounceTimer = setTimeout(flushBody, BODY_DEBOUNCE_MS);
+}
+
+async function flushBody() {
+  if (bodyDebounceTimer) { clearTimeout(bodyDebounceTimer); bodyDebounceTimer = null; }
+  if (!state.activeNoteId) return;
+  const ta = $('#body-textarea');
+  if (!ta) return;
+  state.saveState = 'saving';
+  renderFootSave();
+  try {
+    const updated = await updateNote(state.db, state.activeNoteId, { body: ta.value });
+    state.saveState = 'saved';
+    state.lastSavedAt = updated.updatedAt;
+    renderFootSave();
+    // Update sidebar preview without full re-fetch:
+    const idx = state.notes.findIndex(n => n.id === state.activeNoteId);
+    if (idx >= 0) {
+      state.notes[idx] = { ...state.notes[idx], ...updated };
+      renderSidebarList();
+    }
+  } catch (err) {
+    console.error('[notes] flushBody', err);
+    state.saveState = 'error';
+    renderFootSave();
+  }
+}
+
+window.addEventListener('pagehide', () => {
+  flushBody().catch(() => {});
+});
 
 function renderRight() {
   // Implemented in Task E4.
@@ -189,6 +296,12 @@ function bindEvents() {
   $('#side-search').addEventListener('input', (e) => {
     state.search = e.target.value;
     renderSidebar();
+  });
+
+  $('#toggle-search').addEventListener('click', () => {
+    state.searchInDoc = !state.searchInDoc;
+    $('#toggle-search').classList.toggle('active', state.searchInDoc);
+    renderEditor();
   });
 
   document.addEventListener('keydown', (e) => {
