@@ -422,6 +422,65 @@ function openImageModal(a) {
   $('#modal-img').classList.remove('hidden');
 }
 
+const SHORTCUTS = [
+  { group: 'Globalno', items: [
+    { keys: ['⌘', 'N'],     label: 'Nova bilješka' },
+    { keys: ['⌘', 'O'],     label: 'Otvori karticu' },
+    { keys: ['⌘', 'K'],     label: 'Fokusiraj pretragu' },
+    { keys: ['⌘', '⇧', 'B'], label: 'Otvori popup' }
+  ]},
+  { group: 'Lista', items: [
+    { keys: ['↓'],     label: 'Sljedeća bilješka' },
+    { keys: ['↑'],     label: 'Prethodna bilješka' },
+    { keys: ['↵'],     label: 'Otvori odabranu' },
+    { keys: ['⌘', '⌫'], label: 'Obriši odabranu' },
+    { keys: ['P'],     label: 'Pin / unpin' }
+  ]},
+  { group: 'Editor', items: [
+    { keys: ['⌘', 'S'], label: 'Spremi (flush autosave)' },
+    { keys: ['Esc'],    label: 'Natrag na listu' },
+    { keys: ['⌘', 'V'], label: 'Zalijepi (slika ili tekst)' },
+    { keys: ['↑', '↓'], label: 'Sljedeći / prethodni rezultat (kad je pretraga aktivna)' },
+    { keys: ['⌘', '?'], label: 'Prikaz prečaca' }
+  ]}
+];
+
+function openShortcutsModal() {
+  const modal = $('#modal-shortcuts');
+  modal.classList.remove('hidden');
+  modal.innerHTML = `
+    <div class="mc">
+      <header class="mh">
+        <h2 id="modal-shortcuts-title">Tipkovni prečaci</h2>
+        <button class="ax" type="button" data-icon="x" aria-label="Zatvori"></button>
+      </header>
+      <div class="mb">
+        ${SHORTCUTS.map(g => `
+          <section class="kbd-section">
+            <h3 class="section-label mono">${escapeHtml(g.group)}</h3>
+            <div class="kbd-rows">
+              ${g.items.map(it => `
+                <div class="kbd-row">
+                  <span class="kbd-label">${escapeHtml(it.label)}</span>
+                  <span class="kbd-keys">${it.keys.map(k => `<kbd class="k">${escapeHtml(k)}</kbd>`).join('')}</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  injectIcons(modal);
+  modal.querySelector('.ax').addEventListener('click', closeShortcutsModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeShortcutsModal(); });
+}
+
+function closeShortcutsModal() {
+  $('#modal-shortcuts').classList.add('hidden');
+  $('#modal-shortcuts').innerHTML = '';
+}
+
 function formatDateTime(t) {
   const d = new Date(t);
   return d.toLocaleString('hr-HR', { dateStyle: 'short', timeStyle: 'short' });
@@ -482,6 +541,11 @@ function bindEvents() {
     const ctrl = e.metaKey || e.ctrlKey;
     if (ctrl && k.toLowerCase() === 'k') { e.preventDefault(); $('#side-search').focus(); return; }
     if (ctrl && k.toLowerCase() === 'n' && !isTypingInTextarea(e.target)) { e.preventDefault(); createAndOpen(); return; }
+    if (ctrl && (k === '?' || k === '/')) {
+      e.preventDefault();
+      openShortcutsModal();
+      return;
+    }
     if (state.searchInDoc && (k === 'ArrowDown' || k === 'ArrowUp')) {
       e.preventDefault();
       stepMatch(k === 'ArrowDown' ? +1 : -1);
