@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+  <meta charset="UTF-8">
+  <title>Bilješke</title>
+  <link rel="stylesheet" href="../popup/tokens.css">
+  <link rel="stylesheet" href="tab.css">
+</head>
+<body>
+  <div class="tb-app">
+
+    <!-- LEFT: SIDEBAR -->
+    <aside class="tb-side">
+      <div class="head">
+        <div class="brand">
+          <span class="badge" data-icon="bracket"></span>
+          <h1>Bilješke</h1>
+          <span id="side-count" class="mono muted"></span>
+        </div>
+        <div class="actions">
+          <button id="side-new" class="btn primary" type="button"><span data-icon="plus"></span> Nova</button>
+          <button id="side-filter" class="btn" type="button">Filtri</button>
+        </div>
+        <div class="search-row">
+          <span class="search-icon" data-icon="search"></span>
+          <input id="side-search" type="search" placeholder="Pretraži (⌘K)…" autocomplete="off">
+        </div>
+      </div>
+      <div class="filters" id="side-filters"></div>
+      <div class="scroll" id="side-list"></div>
+    </aside>
+
+    <!-- CENTER: MAIN -->
+    <main class="tb-main">
+      <header class="crumbs">
+        <div class="left">
+          <span data-icon="list"></span>
+          <span class="path mono muted" id="crumb-path">Bilješke</span>
+        </div>
+        <div class="right">
+          <button id="toggle-search" class="btn ghost" type="button">Pretraži u bilješci</button>
+          <button id="toggle-pin" class="btn ghost icon" type="button" data-icon="pin" aria-label="Pribadač"></button>
+          <button id="crumbs-more" class="btn ghost icon" type="button" data-icon="more" aria-label="Više"></button>
+        </div>
+      </header>
+      <article class="doc" id="doc">
+        <div class="empty muted">Odaberi bilješku iz lijevog popisa.</div>
+      </article>
+      <footer class="tb-foot mono muted" id="tb-foot">
+        <span id="foot-save"></span>
+        <span class="sep"></span>
+        <span id="foot-chars"></span>
+        <span class="sep"></span>
+        <span id="foot-atts"></span>
+        <span style="margin-left:auto"></span>
+        <span class="hint">⌘K Pretraži</span>
+        <span class="sep"></span>
+        <span class="hint">⌘N Nova</span>
+        <span class="sep"></span>
+        <span class="hint">⌘? Prečaci</span>
+      </footer>
+    </main>
+
+    <!-- RIGHT: INSPECTOR -->
+    <aside class="tb-right" id="tb-right">
+      <section class="panel">
+        <h3 class="section-label mono">PRIVITCI <span id="right-att-count" class="mono muted"></span></h3>
+        <div class="att-grid" id="att-grid"></div>
+      </section>
+      <section class="panel">
+        <h3 class="section-label mono">DETALJI</h3>
+        <dl id="details"></dl>
+      </section>
+      <section class="panel">
+        <h3 class="section-label mono">OZNAKE</h3>
+        <div class="tags" id="tags"></div>
+      </section>
+      <section class="panel actions-panel">
+        <h3 class="section-label mono">BRZE AKCIJE</h3>
+        <button class="btn ghost" id="act-export" type="button"><span data-icon="download"></span> Izvezi bilješku</button>
+        <button class="btn ghost" id="act-pin" type="button"><span data-icon="pin"></span> Pribadač</button>
+        <button class="btn ghost danger" id="act-delete" type="button"><span data-icon="trash"></span> Obriši</button>
+      </section>
+    </aside>
+
+  </div>
+
+  <!-- MODALS -->
+  <div id="modal-shortcuts" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title"></div>
+  <div id="modal-export" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-export-title"></div>
+  <div id="modal-img" class="modal hidden">
+    <img id="modal-img-el" alt="Pregled privitka">
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script type="module" src="tab.js"></script>
+</body>
+</html>
