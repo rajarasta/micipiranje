@@ -48,6 +48,12 @@ function formatAge(ms) {
   return `${Math.floor(ms / (30 * 86_400_000))}mj`;
 }
 
+function pluralPrivitak(n) {
+  if (n === 1) return 'privitak';
+  if (n >= 2 && n <= 4) return 'privitka';
+  return 'privitaka';
+}
+
 async function refreshNotes() {
   state.notes = await listNotes(state.db);
 }
@@ -64,7 +70,7 @@ function renderFilters() {
   div.innerHTML = '';
   for (const t of tags) {
     const btn = document.createElement('button');
-    btn.className = 'chip mono' + (state.filterTag === t ? ' active' : '');
+    btn.className = 'chip mono' + (state.filterTag === t ? ' on' : '');
     btn.type = 'button';
     btn.textContent = t === 'Sve' ? 'Sve' : t;
     btn.addEventListener('click', () => {
@@ -176,6 +182,16 @@ async function upgradeRowThumb(n, thumbEl) {
 
 let bodyDebounceTimer = null;
 const BODY_DEBOUNCE_MS = 500;
+let footerTicker = null;
+
+function startFooterTicker() {
+  if (footerTicker) return;
+  footerTicker = setInterval(() => {
+    if (state.activeNoteId && state.saveState !== 'saving' && state.saveState !== 'error') {
+      renderFootSave();
+    }
+  }, 30_000);
+}
 
 async function renderEditor() {
   const doc = $('#doc');
@@ -240,7 +256,7 @@ async function renderEditor() {
   state.saveState = 'saved';
   renderFootSave();
   $('#foot-chars').textContent = `${(note.body || '').length} zn.`;
-  $('#foot-atts').textContent = `${note.attachmentIds.length} privitka${note.attachmentIds.length === 1 ? '' : ''}`;
+  $('#foot-atts').textContent = `${note.attachmentIds.length} ${pluralPrivitak(note.attachmentIds.length)}`;
 }
 
 function stepMatch(delta) {
@@ -417,9 +433,11 @@ function releaseRightObjectUrls() {
   }
 }
 
+let modalImageUrl = null;
 function openImageModal(a) {
-  const url = URL.createObjectURL(a.blob);
-  $('#modal-img-el').src = url;
+  if (modalImageUrl) URL.revokeObjectURL(modalImageUrl);
+  modalImageUrl = URL.createObjectURL(a.blob);
+  $('#modal-img-el').src = modalImageUrl;
   $('#modal-img').classList.remove('hidden');
 }
 
@@ -678,6 +696,11 @@ function bindEvents() {
         m.classList.add('hidden');
         if (m.id !== 'modal-img') m.innerHTML = '';
       }
+      if (modalImageUrl) {
+        URL.revokeObjectURL(modalImageUrl);
+        modalImageUrl = null;
+        $('#modal-img-el').src = '';
+      }
     }
   });
 
@@ -708,6 +731,10 @@ function bindEvents() {
     if (e.target.id === 'modal-img') {
       $('#modal-img').classList.add('hidden');
       $('#modal-img-el').src = '';
+      if (modalImageUrl) {
+        URL.revokeObjectURL(modalImageUrl);
+        modalImageUrl = null;
+      }
     }
   });
 }
@@ -725,12 +752,11 @@ async function createAndOpen() {
 
 async function openNote(id) {
   state.activeNoteId = id;
-  renderEditor();
-  renderRight();
-  // Update active class on sidebar rows
   for (const row of document.querySelectorAll('#side-list .b-row')) {
     row.classList.toggle('active', row.dataset.id === id);
   }
+  await renderEditor();
+  await renderRight();
 }
 
 async function init() {
@@ -741,9 +767,12 @@ async function init() {
   renderEditor();
   renderRight();
   bindEvents();
+  startFooterTicker();
 }
 
 init().catch(err => {
   console.error('[notes] tab init', err);
-  document.body.innerHTML = `<div style="padding:24px;font-family:system-ui">Ne mogu otvoriti pohranu.<br><br><button onclick="location.reload()">Pokušaj ponovno</button></div>`;
+  document.body.innerHTML = `<div style="padding:24px;font-family:system-ui">Ne mogu otvoriti pohranu.<br><br><button id="btn-retry-tab" type="button">Pokušaj ponovno</button></div>`;
+  const btn = document.getElementById('btn-retry-tab');
+  if (btn) btn.addEventListener('click', () => location.reload());
 });

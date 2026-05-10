@@ -25,6 +25,7 @@ const state = {
 let bodyDebounceTimer = null;
 const BODY_DEBOUNCE_MS = 500;
 let saveStateInterval = null;
+let popupModalUrl = null;
 
 function renderSaveState() {
   const el = $('#save-state');
@@ -404,7 +405,7 @@ async function renderAttachmentRow(attId, li) {
     const img = document.createElement('img');
     img.src = url;
     img.alt = '';
-    img.addEventListener('click', () => openModal(URL.createObjectURL(att.blob)));
+    img.addEventListener('click', () => openImagePreview(att.blob));
     img.onerror = () => { swatch.replaceWith(document.createTextNode('⚠')); };
     swatch.appendChild(img);
   } else {
@@ -452,8 +453,10 @@ function formatSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function openModal(src) {
-  $('#modal-img').src = src;
+function openImagePreview(blob) {
+  if (popupModalUrl) URL.revokeObjectURL(popupModalUrl);
+  popupModalUrl = URL.createObjectURL(blob);
+  $('#modal-img').src = popupModalUrl;
   $('#modal').classList.remove('hidden');
 }
 
@@ -553,6 +556,10 @@ window.addEventListener('pagehide', () => {
 $('#modal').addEventListener('click', () => {
   $('#modal').classList.add('hidden');
   $('#modal-img').src = '';
+  if (popupModalUrl) {
+    URL.revokeObjectURL(popupModalUrl);
+    popupModalUrl = null;
+  }
 });
 
 init().catch(err => {
