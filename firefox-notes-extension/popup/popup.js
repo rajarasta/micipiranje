@@ -1,6 +1,7 @@
 import { openDb } from '../lib/db.js';
 import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
 import { parsePaste } from '../lib/clipboard.js';
+import { groupNotesByDate } from '../lib/grouping.js';
 import { iconHtml } from './icons.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -123,32 +124,115 @@ async function renderLauncher() {
 }
 
 async function renderList() {
-  const notes = state.searchQuery
+  const allNotes = state.searchQuery
     ? await searchNotes(state.db, state.searchQuery)
     : await listNotes(state.db);
 
   const container = $('#note-list');
   container.innerHTML = '';
 
-  if (notes.length === 0) {
+  // Update substats
+  const sub = $('#list-substats');
+  if (sub) {
+    sub.textContent = allNotes.length === 0
+      ? '— bilješki · auto-spremanje'
+      : `${allNotes.length} ${pluralizeNotes(allNotes.length)} · auto-spremanje`;
+  }
+
+  if (allNotes.length === 0) {
     $('#empty-list').classList.remove('hidden');
+    container.classList.add('hidden');
     return;
   }
   $('#empty-list').classList.add('hidden');
+  container.classList.remove('hidden');
 
-  for (const note of notes) {
-    const row = document.createElement('div');
-    row.className = 'note-card';
-    row.dataset.id = note.id;
-    row.innerHTML = `
-      <div class="title">
-        <span>${escapeHtml(note.title) || '<em>(bez naslova)</em>'}</span>
-        ${note.attachmentIds.length ? `<span class="att-count">🖼 ${note.attachmentIds.length}</span>` : ''}
-      </div>
-      <div class="preview">${escapeHtml(note.body.slice(0, 120)) || '<em>—</em>'}</div>
-    `;
-    row.addEventListener('click', () => openEditorFromId(note.id));
-    container.appendChild(row);
+  // Release any thumbnail object URLs from previous render of list
+  releaseListObjectUrls();
+
+  const groups = groupNotesByDate(allNotes);
+  for (const group of groups) {
+    const head = document.createElement('div');
+    head.className = 'group-head';
+    head.innerHTML = `<span class="section-label mono">${escapeHtml(group.label)}</span><span class="mono muted">${group.notes.length}</span>`;
+    container.appendChild(head);
+
+    for (const note of group.notes) {
+      container.appendChild(await buildNoteRow(note));
+    }
+  }
+  injectIcons(container);
+}
+
+function pluralizeNotes(n) {
+  if (n === 1) return 'bilješka';
+  if (n < 5) return 'bilješke';
+  return 'bilješki';
+}
+
+async function buildNoteRow(note) {
+  const row = document.createElement('div');
+  row.className = 'b-row';
+  row.dataset.id = note.id;
+
+  // Thumbnail cell
+  const thumb = document.createElement('div');
+  thumb.className = 'thumb';
+  const firstImg = await firstImageAttachment(note);
+  if (firstImg && firstImg.thumbBlob instanceof Blob) {
+    const url = URL.createObjectURL(firstImg.thumbBlob);
+    objectUrls.set(`row-${note.id}`, url);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    thumb.appendChild(img);
+  } else if (note.attachmentIds && note.attachmentIds.length) {
+    thumb.innerHTML = `<span data-icon="image"></span>`;
+  } else {
+    thumb.innerHTML = `<span data-icon="list"></span>`;
+  }
+
+  // Body cell
+  const body = document.createElement('div');
+  body.className = 'body';
+  const preview = notePreview(note);
+  const ageMs = Date.now() - note.updatedAt;
+  body.innerHTML = `
+    <div class="preview">${escapeHtml(preview) || '<em class="muted">(prazna bilješka)</em>'}</div>
+    <div class="meta mono muted">
+      ${formatAge(ageMs)} · ${note.body ? note.body.length : 0} zn.
+    </div>
+  `;
+
+  // Right cell
+  const right = document.createElement('div');
+  right.className = 'right';
+  const attCount = note.attachmentIds ? note.attachmentIds.length : 0;
+  right.innerHTML = `
+    <span class="age mono muted">${formatAge(ageMs)}</span>
+    ${attCount ? `<span class="att-pill mono"><span data-icon="paperclip"></span> ${attCount}</span>` : ''}
+  `;
+
+  row.append(thumb, body, right);
+  row.addEventListener('click', () => openEditorFromId(note.id));
+  return row;
+}
+
+async function firstImageAttachment(note) {
+  if (!note.attachmentIds || note.attachmentIds.length === 0) return null;
+  for (const id of note.attachmentIds) {
+    const a = await getAttachment(state.db, id);
+    if (a && a.mimeType && a.mimeType.startsWith('image/')) return a;
+  }
+  return null;
+}
+
+function releaseListObjectUrls() {
+  for (const [key, url] of objectUrls.entries()) {
+    if (key.startsWith('row-')) {
+      URL.revokeObjectURL(url);
+      objectUrls.delete(key);
+    }
   }
 }
 
@@ -162,6 +246,7 @@ function escapeHtml(str) {
 }
 
 async function openEditorFromId(id) {
+  releaseListObjectUrls();
   await openEditor(id);
   setView('editor');
 }
