@@ -284,11 +284,164 @@ window.addEventListener('pagehide', () => {
   flushBody().catch(() => {});
 });
 
-function renderRight() {
-  // Implemented in Task E4.
-  $('#att-grid').innerHTML = '';
-  $('#details').innerHTML = '';
-  $('#tags').innerHTML = '';
+async function renderRight() {
+  const grid = $('#att-grid');
+  const details = $('#details');
+  const tagsBox = $('#tags');
+  const rightCount = $('#right-att-count');
+
+  grid.innerHTML = '';
+  details.innerHTML = '';
+  tagsBox.innerHTML = '';
+  rightCount.textContent = '';
+
+  if (!state.activeNoteId) return;
+
+  const note = await getNote(state.db, state.activeNoteId);
+  if (!note) return;
+
+  // Attachments grid
+  rightCount.textContent = `${note.attachmentIds.length}`;
+  releaseRightObjectUrls();
+  for (const aid of note.attachmentIds) {
+    const a = await getAttachment(state.db, aid);
+    grid.appendChild(buildAttachmentCard(aid, a));
+  }
+  // Always last: + Zalijepi add card
+  const addCard = document.createElement('div');
+  addCard.className = 'att-card add';
+  addCard.innerHTML = `<span class="muted mono">+ Zalijepi</span>`;
+  addCard.addEventListener('click', () => triggerFilePicker());
+  grid.appendChild(addCard);
+
+  injectIcons(grid);
+
+  // Details
+  const idShort = `${note.id.slice(0, 4)}…${note.id.slice(-4)}`;
+  const totalSize = (note.body || '').length;
+  details.innerHTML = `
+    <div><dt class="muted">ID</dt><dd class="mono">${escapeHtml(idShort)}</dd></div>
+    <div><dt class="muted">Stvoreno</dt><dd class="mono">${escapeHtml(formatDateTime(note.createdAt))}</dd></div>
+    <div><dt class="muted">Uređeno</dt><dd class="mono">${escapeHtml(formatDateTime(note.updatedAt))}</dd></div>
+    <div><dt class="muted">Veličina</dt><dd class="mono">${formatBytes(totalSize)}</dd></div>
+    <div><dt class="muted">Verzija</dt><dd class="mono">1</dd></div>
+  `;
+
+  // Tags
+  for (const t of (note.tags || [])) {
+    const pill = document.createElement('span');
+    pill.className = 't mono';
+    pill.textContent = t;
+    pill.title = 'Klikni za uklanjanje';
+    pill.style.cursor = 'pointer';
+    pill.addEventListener('click', async () => {
+      const newTags = (note.tags || []).filter(x => x !== t);
+      await setTags(state.db, note.id, newTags);
+      await refreshNotes();
+      renderRight();
+      renderSidebar();
+    });
+    tagsBox.appendChild(pill);
+  }
+  const addTag = document.createElement('button');
+  addTag.className = 't mono add-tag';
+  addTag.type = 'button';
+  addTag.textContent = '+ oznaka';
+  addTag.addEventListener('click', async () => {
+    const v = prompt('Nova oznaka:');
+    if (!v) return;
+    const newTags = Array.from(new Set([...(note.tags || []), v.trim()].filter(Boolean)));
+    await setTags(state.db, note.id, newTags);
+    await refreshNotes();
+    renderRight();
+    renderSidebar();
+  });
+  tagsBox.appendChild(addTag);
+}
+
+function buildAttachmentCard(aid, a) {
+  const card = document.createElement('div');
+  card.className = 'att-card';
+  if (!a) {
+    card.innerHTML = `<div class="frame"><span class="muted">⚠</span></div><div class="info mono"><span class="name">privitak nedostaje</span></div>`;
+    return card;
+  }
+  const frame = document.createElement('div');
+  frame.className = 'frame';
+  if (a.mimeType && a.mimeType.startsWith('image/')) {
+    const blob = a.thumbBlob instanceof Blob ? a.thumbBlob : a.blob;
+    const url = URL.createObjectURL(blob);
+    objectUrls.set(`right-${aid}`, url);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    img.style.cursor = 'zoom-in';
+    img.addEventListener('click', () => openImageModal(a));
+    frame.appendChild(img);
+  } else {
+    frame.innerHTML = `<span data-icon="image"></span>`;
+  }
+  card.appendChild(frame);
+
+  const info = document.createElement('div');
+  info.className = 'info mono';
+  info.innerHTML = `<span class="name">${escapeHtml(a.filename)}</span><span class="size muted">${formatBytes(a.size)}</span>`;
+  card.appendChild(info);
+  return card;
+}
+
+function releaseRightObjectUrls() {
+  for (const [k, url] of objectUrls.entries()) {
+    if (k.startsWith('right-')) { URL.revokeObjectURL(url); objectUrls.delete(k); }
+  }
+}
+
+function openImageModal(a) {
+  const url = URL.createObjectURL(a.blob);
+  $('#modal-img-el').src = url;
+  $('#modal-img').classList.remove('hidden');
+}
+
+function formatDateTime(t) {
+  const d = new Date(t);
+  return d.toLocaleString('hr-HR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function triggerFilePicker() {
+  // Lazy create a hidden input each time (no markup change required)
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*,application/pdf';
+  inp.multiple = true;
+  inp.addEventListener('change', async () => {
+    if (!state.activeNoteId) return;
+    for (const f of inp.files) {
+      try { await addAttachment(state.db, state.activeNoteId, f, f.type, f.name); }
+      catch (err) { console.error('[notes] add file', err); }
+    }
+    await refreshNotes();
+    await renderEditor();
+    await renderRight();
+    renderSidebar();
+  });
+  inp.click();
+}
+
+let toastTimer = null;
+function showToast(message, kind = 'info') {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.remove('hidden', 'error');
+  if (kind === 'error') el.classList.add('error');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 2000);
 }
 
 function bindEvents() {
@@ -312,6 +465,39 @@ function bindEvents() {
     if (k === 'Escape') {
       // Close any open modal
       for (const m of document.querySelectorAll('.modal:not(.hidden)')) m.classList.add('hidden');
+    }
+  });
+
+  $('#act-pin').addEventListener('click', async () => {
+    if (!state.activeNoteId) return;
+    await togglePin(state.db, state.activeNoteId);
+    await refreshNotes();
+    renderRight();
+    renderSidebar();
+  });
+
+  $('#toggle-pin').addEventListener('click', () => $('#act-pin').click());
+
+  $('#act-delete').addEventListener('click', async () => {
+    if (!state.activeNoteId) return;
+    if (!confirm('Obrisati ovu bilješku i sve privitke?')) return;
+    await deleteNote(state.db, state.activeNoteId);
+    state.activeNoteId = null;
+    await refreshNotes();
+    renderEditor();
+    renderRight();
+    renderSidebar();
+  });
+
+  $('#act-export').addEventListener('click', () => {
+    // Phase G2 wires the modal; for now show a placeholder toast
+    showToast('Izvoz dolazi u Phase G');
+  });
+
+  $('#modal-img').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-img') {
+      $('#modal-img').classList.add('hidden');
+      $('#modal-img-el').src = '';
     }
   });
 }

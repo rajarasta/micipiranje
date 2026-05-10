@@ -569,6 +569,22 @@ body {
   color: var(--ink);
   font-weight: 500;
 }
+#details > div {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 4px 0;
+}
+#details dt {
+  color: var(--muted);
+  margin: 0;
+}
+#details dd {
+  color: var(--ink);
+  margin: 0;
+  font-weight: 500;
+}
 
 .tags {
   display: flex;
@@ -583,7 +599,8 @@ body {
   padding: 3px 8px;
   border-radius: 999px;
 }
-.tags .t.add {
+.tags .t.add,
+.tags .t.add-tag {
   background: transparent;
   border: 1px dashed var(--rule-strong);
   color: var(--muted);
