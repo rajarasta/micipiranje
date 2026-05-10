@@ -4,13 +4,18 @@
   "version": "0.1.0",
   "description": "Lokalne bilješke s podrškom za paste slika.",
   "icons": {
-    "48": "icons/icon-48.png",
-    "96": "icons/icon-96.png"
+    "16": "icons/bracket-16.png",
+    "32": "icons/bracket-32.png",
+    "48": "icons/bracket-48.png"
   },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "Bilješke",
-    "default_icon": { "48": "icons/icon-48.png" }
+    "default_icon": {
+      "16": "icons/bracket-16.png",
+      "32": "icons/bracket-32.png",
+      "48": "icons/bracket-48.png"
+    }
   },
   "permissions": [],
   "browser_specific_settings": {
