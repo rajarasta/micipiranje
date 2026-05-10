@@ -714,6 +714,57 @@ body {
   gap: 2px;
   align-items: center;
 }
+
+/* Export modal — single column, distinct from the two-column shortcuts modal */
+#modal-export .mb {
+  grid-template-columns: 1fr;
+  gap: 0;
+  display: block;
+}
+.export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+.export-card {
+  background: var(--chrome);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  font: inherit;
+  transition: 120ms;
+}
+.export-card:hover:not(.disabled) {
+  border-color: var(--rule-strong);
+}
+.export-card.active {
+  border-color: var(--ink);
+  background: var(--card);
+}
+.export-card.disabled { opacity: 0.55; cursor: not-allowed; }
+.export-card .fmt {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+.export-card .desc { font-size: 11.5px; line-height: 1.4; }
+.export-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--chrome);
+  border-radius: 10px;
+}
 kbd.k {
   font-family: var(--mono);
   font-size: 10.5px;

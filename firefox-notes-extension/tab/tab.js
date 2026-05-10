@@ -6,6 +6,7 @@ import {
 import { groupNotesByDate } from '../lib/grouping.js';
 import { derivedTagFilters } from '../lib/tags.js';
 import { splitMatches } from '../lib/search.js';
+import { exportMarkdown, exportJson } from '../lib/export.js';
 import { iconHtml } from '../popup/icons.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -481,6 +482,113 @@ function closeShortcutsModal() {
   $('#modal-shortcuts').innerHTML = '';
 }
 
+async function openExportModal() {
+  const modal = $('#modal-export');
+  modal.classList.remove('hidden');
+
+  // Compute counts
+  const notes = state.notes;
+  let attCount = 0, totalSize = 0;
+  const attsByNote = {};
+  for (const n of notes) {
+    attsByNote[n.id] = [];
+    for (const aid of n.attachmentIds || []) {
+      const a = await getAttachment(state.db, aid);
+      if (a) {
+        attsByNote[n.id].push(a);
+        attCount += 1;
+        totalSize += a.size || 0;
+      }
+    }
+  }
+  const totalSizeStr = totalSize < 1024 * 1024
+    ? `${Math.round(totalSize / 1024)} KB`
+    : `${(totalSize / 1024 / 1024).toFixed(1)} MB`;
+
+  let chosen = 'md';
+
+  modal.innerHTML = `
+    <div class="mc">
+      <header class="mh">
+        <h2 id="modal-export-title">Izvoz</h2>
+        <button class="ax" type="button" data-icon="x" aria-label="Zatvori"></button>
+      </header>
+      <div class="mb">
+        <div class="export-grid">
+          <button class="export-card active" data-fmt="md" type="button">
+            <span class="fmt mono">.md</span>
+            <span class="desc muted">Markdown — jedan blok po bilješci, sa front-matter metapodacima.</span>
+          </button>
+          <button class="export-card" data-fmt="json" type="button">
+            <span class="fmt mono">.json</span>
+            <span class="desc muted">Strukturirani export — bilješke + privitci kao base64. Pogodno za backup.</span>
+          </button>
+          <button class="export-card disabled" data-fmt="zip" type="button" disabled>
+            <span class="fmt mono">.zip</span>
+            <span class="desc muted">Markdown + originalni privitci. (Dolazi uskoro.)</span>
+          </button>
+        </div>
+        <div class="export-status">
+          <span class="mono"><strong>${notes.length}</strong> bilješki · ${attCount} privitaka · ~${totalSizeStr}</span>
+          <button id="export-download" class="btn primary" type="button">Preuzmi</button>
+        </div>
+      </div>
+    </div>
+  `;
+  injectIcons(modal);
+
+  // Wire format selection
+  modal.querySelectorAll('.export-card[data-fmt]:not(.disabled)').forEach(card => {
+    card.addEventListener('click', () => {
+      modal.querySelectorAll('.export-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      chosen = card.dataset.fmt;
+    });
+  });
+
+  modal.querySelector('.ax').addEventListener('click', closeExportModal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
+
+  $('#export-download').addEventListener('click', async () => {
+    let blob, filename;
+    if (chosen === 'md') {
+      blob = exportMarkdown(notes);
+      filename = `biljeske-${todayStamp()}.md`;
+    } else if (chosen === 'json') {
+      blob = await exportJson(notes, attsByNote);
+      filename = `biljeske-${todayStamp()}.json`;
+    } else {
+      return;
+    }
+    triggerDownload(blob, filename);
+    showToast('Preuzimanje pokrenuto');
+  });
+}
+
+function closeExportModal() {
+  $('#modal-export').classList.add('hidden');
+  $('#modal-export').innerHTML = '';
+}
+
+function todayStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 0);
+}
+
 function formatDateTime(t) {
   const d = new Date(t);
   return d.toLocaleString('hr-HR', { dateStyle: 'short', timeStyle: 'short' });
@@ -581,10 +689,7 @@ function bindEvents() {
     renderSidebar();
   });
 
-  $('#act-export').addEventListener('click', () => {
-    // Phase G2 wires the modal; for now show a placeholder toast
-    showToast('Izvoz dolazi u Phase G');
-  });
+  $('#act-export').addEventListener('click', () => openExportModal().catch(err => console.error('[notes] export', err)));
 
   $('#modal-img').addEventListener('click', (e) => {
     if (e.target.id === 'modal-img') {
