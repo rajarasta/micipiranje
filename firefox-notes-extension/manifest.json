@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Bilješke",
+  "version": "0.1.0",
+  "description": "Lokalne bilješke s podrškom za paste slika.",
+  "icons": {
+    "16": "icons/bracket-16.png",
+    "32": "icons/bracket-32.png",
+    "48": "icons/bracket-48.png"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Bilješke",
+    "default_icon": {
+      "16": "icons/bracket-16.png",
+      "32": "icons/bracket-32.png",
+      "48": "icons/bracket-48.png"
+    }
+  },
+  "permissions": [],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "biljeske@local",
+      "strict_min_version": "115.0"
+    }
+  }
+}

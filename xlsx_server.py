@@ -206,7 +206,7 @@ def _resolve_column(df: pd.DataFrame, column) -> str:
 @mcp.tool()
 def xlsx_read_column(
     path: str,
-    column,
+    column: str | int,
     start: int = 0,
     count: int = 200,
     sheet: str | None = None,
@@ -367,4 +367,10 @@ def xlsx_match_list(
 if __name__ == "__main__":
     # Eagerly verify the env var at startup when running as a server.
     _root()
-    mcp.run()
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "http":
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+        mcp.settings.port = int(os.environ.get("MCP_PORT", "8091"))
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()

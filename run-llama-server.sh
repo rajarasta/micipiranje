@@ -6,10 +6,10 @@ set -euo pipefail
 
 LLAMA_BIN="${LLAMA_BIN:-/home/josip-rastocic/llama/latest/build/bin/llama-server}"
 MODEL_DIR="/media/josip-rastocic/DrugiDisk/Programi/LM STUDIO/modeli/.lmstudio/models/lmstudio-community"
-MODEL="${MODEL:-$MODEL_DIR/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf}"
+MODEL="${MODEL:-$MODEL_DIR/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q4_K_M.gguf}"
 # Multimodal projector — same dir as MODEL, enables vision input (image tokens
 # from MCP ImageContent, PDF page renders, pasted images in WebUI). 880 MB BF16.
-MMPROJ="${MMPROJ:-$MODEL_DIR/Qwen3.5-9B-GGUF/mmproj-Qwen3.5-9B-BF16.gguf}"
+MMPROJ="${MMPROJ:-$MODEL_DIR/Qwen3.5-9B-GGUF/mmproj-Qwen3.6-35B-A3B-BF16.gguf}"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8033}"
 # Qwen3.5-9B is a hybrid SSM + attention model (full_attention_interval=4),
@@ -17,7 +17,7 @@ PORT="${PORT:-8033}"
 # at 80k Q8_0 the KV cache is ~1.4 GB (not the ~5 GB a dense model would need).
 # Measured fit on RTX 5070 Ti (16 GB): model 4.8 + ctx 1.4 + compute 0.5 ≈ 6.7 GB.
 CTX_SIZE="${CTX_SIZE:-81920}"    # 80 * 1024
-N_GPU_LAYERS="${N_GPU_LAYERS:-99}"
+N_GPU_LAYERS="${N_GPU_LAYERS:-18}"
 KV_CACHE_TYPE="${KV_CACHE_TYPE:-q8_0}"
 N_PARALLEL="${N_PARALLEL:-1}"
 

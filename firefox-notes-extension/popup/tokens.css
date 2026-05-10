@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+  /* surfaces */
+  --canvas:        #f5f2eb;
+  --chrome:        #fbfaf6;
+  --card:          #fefdf9;
+
+  /* ink */
+  --ink:           #1c1a17;
+  --ink-soft:      #3a352e;
+  --muted:         #8b8579;
+  --muted-2:       #b3ada0;
+
+  /* rules */
+  --rule:          #ece7db;
+  --rule-strong:   #ddd6c5;
+
+  /* accent (mono) */
+  --accent:        #1c1a17;
+  --accent-fg:     #fbfaf6;
+
+  /* tags & states */
+  --tag:           oklch(63% 0.02 80);
+  --tag-bg:        oklch(94% 0.01 80);
+  --hi:            oklch(92% 0.07 90);
+
+  /* shadows */
+  --shadow-sm:     0 1px 2px rgba(28,26,23,0.04), 0 0 0 1px rgba(28,26,23,0.05);
+  --shadow-md:     0 4px 16px rgba(28,26,23,0.06), 0 0 0 1px rgba(28,26,23,0.06);
+  --shadow-lg:     0 18px 48px rgba(28,26,23,0.18), 0 0 0 1px rgba(28,26,23,0.08);
+
+  /* radii */
+  --radius-sm:     6px;
+  --radius:        10px;
+  --radius-lg:     14px;
+
+  /* type */
+  --font:          'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono:          'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
