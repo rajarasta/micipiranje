@@ -1,35 +1,83 @@
 import { openDb } from '../lib/db.js';
 import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote, addAttachment, removeAttachment, getAttachment } from '../lib/notes.js';
 import { parsePaste } from '../lib/clipboard.js';
+import { iconHtml } from './icons.js';
 
 const $ = (sel) => document.querySelector(sel);
+
+function injectIcons(root = document) {
+  for (const el of root.querySelectorAll('[data-icon]')) {
+    const name = el.dataset.icon;
+    if (name) el.innerHTML = iconHtml(name);
+  }
+}
 
 const state = {
   db: null,
   currentNoteId: null,
-  searchQuery: ''
+  searchQuery: '',
+  view: 'launcher'
 };
 
 let bodyDebounceTimer = null;
 const BODY_DEBOUNCE_MS = 500;
 
+function setView(name) {
+  state.view = name;
+  $('#view-launcher').classList.toggle('hidden', name !== 'launcher');
+  $('#view-list').classList.toggle('hidden', name !== 'list');
+  $('#view-editor').classList.toggle('hidden', name !== 'editor');
+}
+
+function notePreview(note) {
+  return (note.body || '').slice(0, 80);
+}
+
+function formatAge(ms) {
+  if (ms < 60_000) return 'sad';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
+  if (ms < 7 * 86_400_000) return `${Math.floor(ms / 86_400_000)}d`;
+  if (ms < 30 * 86_400_000) return `${Math.floor(ms / (7 * 86_400_000))}tj`;
+  return `${Math.floor(ms / (30 * 86_400_000))}mj`;
+}
+
 async function init() {
   state.db = await openDb();
+  injectIcons();
   bindStaticEvents();
   bindPasteHandler();
-  await renderList();
+  await renderLauncher();
+  setView('launcher');
+}
+
+async function handleNewNote() {
+  const note = await createNote(state.db);
+  await openEditorFromId(note.id);
 }
 
 function bindStaticEvents() {
-  $('#btn-new').addEventListener('click', onNewNoteClick);
+  $('#btn-new').addEventListener('click', () => handleNewNote().catch(err => console.error('[notes]', err)));
   $('#search').addEventListener('input', onSearchInput);
   $('#btn-back').addEventListener('click', () => { showList().catch(err => console.error('[notes]', err)); });
   $('#btn-delete').addEventListener('click', () => { onDeleteNoteClick().catch(err => console.error('[notes]', err)); });
-}
 
-async function onNewNoteClick() {
-  const note = await createNote(state.db);
-  openEditor(note.id);
+  $('#hero-new').addEventListener('click', () => handleNewNote().catch(err => console.error('[notes] hero-new', err)));
+
+  $('#hero-list').addEventListener('click', () => {
+    setView('list');
+    renderList().catch(err => console.error('[notes] renderList', err));
+  });
+
+  $('#hero-tab').addEventListener('click', async () => {
+    try {
+      const ext = (typeof browser !== 'undefined') ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+      if (!ext) { console.warn('[notes] no extension API'); return; }
+      const url = ext.runtime.getURL('tab/tab.html');
+      await ext.tabs.create({ url });
+      window.close();
+    } catch (err) { console.error('[notes] hero-tab', err); }
+  });
 }
 
 function onSearchInput(e) {
@@ -37,13 +85,50 @@ function onSearchInput(e) {
   renderList();
 }
 
+async function renderLauncher() {
+  const notes = await listNotes(state.db);
+  $('#launcher-stats').textContent = notes.length === 0
+    ? 'Još nema bilješki'
+    : `${notes.length} ${notes.length === 1 ? 'bilješka' : (notes.length < 5 ? 'bilješke' : 'bilješki')}`;
+
+  const recents = notes.slice(0, 4);
+  const ul = $('#launcher-recents');
+  ul.innerHTML = '';
+
+  if (recents.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'recent empty muted';
+    li.textContent = 'Klikni "Nova bilješka" za prvi unos.';
+    ul.appendChild(li);
+    return;
+  }
+
+  for (const n of recents) {
+    const li = document.createElement('li');
+    li.className = 'recent';
+    li.dataset.id = n.id;
+
+    const preview = notePreview(n) || '(prazna bilješka)';
+    const ageMs = Date.now() - n.updatedAt;
+
+    li.innerHTML = `
+      <span class="thumb" data-icon="${n.attachmentIds && n.attachmentIds.length ? 'image' : 'list'}"></span>
+      <span class="preview">${escapeHtml(preview)}</span>
+      <span class="age mono muted">${formatAge(ageMs)}</span>
+    `;
+    li.addEventListener('click', () => openEditorFromId(n.id));
+    ul.appendChild(li);
+  }
+  injectIcons(ul);
+}
+
 async function renderList() {
   const notes = state.searchQuery
     ? await searchNotes(state.db, state.searchQuery)
     : await listNotes(state.db);
 
-  const ul = $('#note-list');
-  ul.innerHTML = '';
+  const container = $('#note-list');
+  container.innerHTML = '';
 
   if (notes.length === 0) {
     $('#empty-list').classList.remove('hidden');
@@ -52,18 +137,18 @@ async function renderList() {
   $('#empty-list').classList.add('hidden');
 
   for (const note of notes) {
-    const li = document.createElement('li');
-    li.className = 'note-card';
-    li.dataset.id = note.id;
-    li.innerHTML = `
+    const row = document.createElement('div');
+    row.className = 'note-card';
+    row.dataset.id = note.id;
+    row.innerHTML = `
       <div class="title">
         <span>${escapeHtml(note.title) || '<em>(bez naslova)</em>'}</span>
         ${note.attachmentIds.length ? `<span class="att-count">🖼 ${note.attachmentIds.length}</span>` : ''}
       </div>
       <div class="preview">${escapeHtml(note.body.slice(0, 120)) || '<em>—</em>'}</div>
     `;
-    li.addEventListener('click', () => openEditor(note.id));
-    ul.appendChild(li);
+    row.addEventListener('click', () => openEditorFromId(note.id));
+    container.appendChild(row);
   }
 }
 
@@ -76,6 +161,11 @@ function escapeHtml(str) {
     .replaceAll("'", '&#39;');
 }
 
+async function openEditorFromId(id) {
+  await openEditor(id);
+  setView('editor');
+}
+
 async function openEditor(id) {
   const note = await getNote(state.db, id);
   if (!note) {
@@ -83,35 +173,23 @@ async function openEditor(id) {
     return;
   }
   state.currentNoteId = id;
-  $('#editor-title').value = note.title;
-  $('#editor-body').value = note.body;
-  $('#view-list').classList.add('hidden');
-  $('#view-editor').classList.remove('hidden');
+  $('#editor-body').value = note.body || '';
+  setView('editor');
   renderAttachments(note);
   rebindEditorEvents();
-  $('#editor-title').focus();
+  $('#editor-body').focus();
 }
 
 function rebindEditorEvents() {
-  const title = $('#editor-title');
-  const body = $('#editor-body');
-  title.oninput = null;
-  title.onblur = onTitleBlur;
-  body.oninput = onBodyInput;
+  $('#editor-body').oninput = onBodyInput;
 }
 
 function unbindEditorEvents() {
-  $('#editor-title').onblur = null;
   $('#editor-body').oninput = null;
   if (bodyDebounceTimer) {
     clearTimeout(bodyDebounceTimer);
     bodyDebounceTimer = null;
   }
-}
-
-async function onTitleBlur() {
-  if (!state.currentNoteId) return;
-  await updateNote(state.db, state.currentNoteId, { title: $('#editor-title').value });
 }
 
 function onBodyInput() {
@@ -131,10 +209,9 @@ async function flushBody() {
 async function flushAndPrune() {
   if (!state.currentNoteId) return;
   await flushBody();
-  await updateNote(state.db, state.currentNoteId, { title: $('#editor-title').value });
 
   const note = await getNote(state.db, state.currentNoteId);
-  if (note && !note.title.trim() && !note.body.trim() && note.attachmentIds.length === 0) {
+  if (note && !note.body.trim() && note.attachmentIds.length === 0) {
     await deleteNote(state.db, state.currentNoteId);
   }
 }
@@ -259,8 +336,7 @@ async function onDeleteNoteClick() {
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
   state.currentNoteId = null;
-  $('#view-editor').classList.add('hidden');
-  $('#view-list').classList.remove('hidden');
+  setView('list');
   await renderList();
 }
 
@@ -270,8 +346,7 @@ async function showList() {
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
   state.currentNoteId = null;
-  $('#view-editor').classList.add('hidden');
-  $('#view-list').classList.remove('hidden');
+  setView('list');
   await renderList();
 }
 
