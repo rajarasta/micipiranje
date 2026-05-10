@@ -17,11 +17,56 @@ const state = {
   db: null,
   currentNoteId: null,
   searchQuery: '',
-  view: 'launcher'
+  view: 'launcher',
+  saveState: 'idle',     // 'idle' | 'saving' | 'saved' | 'error'
+  lastSavedAt: 0
 };
 
 let bodyDebounceTimer = null;
 const BODY_DEBOUNCE_MS = 500;
+let saveStateInterval = null;
+
+function renderSaveState() {
+  const el = $('#save-state');
+  if (!el) return;
+  el.classList.remove('error', 'pulse');
+  if (state.saveState === 'saving') {
+    el.innerHTML = `<span class="label mono"><em>Sprema se…</em></span>`;
+  } else if (state.saveState === 'error') {
+    el.innerHTML = `<span class="dot error"></span><span class="label">Greška spremanja</span>`;
+    el.classList.add('error');
+  } else if (state.saveState === 'saved' && state.lastSavedAt) {
+    const ageMs = Date.now() - state.lastSavedAt;
+    el.innerHTML = `<span class="dot"></span><span class="label">Spremljeno · ${formatAge(ageMs)}</span>`;
+  } else {
+    el.innerHTML = `<span class="dot"></span><span class="label">Spremljeno</span>`;
+  }
+}
+
+function startSaveStateTicker() {
+  stopSaveStateTicker();
+  saveStateInterval = setInterval(() => {
+    if (state.view === 'editor') renderSaveState();
+  }, 30_000);
+}
+
+function stopSaveStateTicker() {
+  if (saveStateInterval) {
+    clearInterval(saveStateInterval);
+    saveStateInterval = null;
+  }
+}
+
+function pulseSaved() {
+  state.saveState = 'saved';
+  state.lastSavedAt = Date.now();
+  renderSaveState();
+  const el = $('#save-state');
+  if (el) {
+    el.classList.add('pulse');
+    setTimeout(() => el.classList.remove('pulse'), 1200);
+  }
+}
 
 function setView(name) {
   state.view = name;
@@ -48,6 +93,7 @@ async function init() {
   injectIcons();
   bindStaticEvents();
   bindPasteHandler();
+  bindAttachAddHandler();
   await renderLauncher();
   setView('launcher');
 }
@@ -262,6 +308,10 @@ async function openEditor(id) {
   setView('editor');
   renderAttachments(note);
   rebindEditorEvents();
+  state.lastSavedAt = note.updatedAt;
+  state.saveState = 'saved';
+  renderSaveState();
+  startSaveStateTicker();
   $('#editor-body').focus();
 }
 
@@ -288,7 +338,16 @@ async function flushBody() {
     bodyDebounceTimer = null;
   }
   if (!state.currentNoteId) return;
-  await updateNote(state.db, state.currentNoteId, { body: $('#editor-body').value });
+  state.saveState = 'saving';
+  renderSaveState();
+  try {
+    await updateNote(state.db, state.currentNoteId, { body: $('#editor-body').value });
+    pulseSaved();
+  } catch (err) {
+    console.error('[notes] flushBody', err);
+    state.saveState = 'error';
+    renderSaveState();
+  }
 }
 
 async function flushAndPrune() {
@@ -307,42 +366,68 @@ function renderAttachments(note) {
   const ul = $('#attachment-list');
   ul.innerHTML = '';
   for (const attId of note.attachmentIds) {
-    const placeholder = document.createElement('li');
-    placeholder.className = 'att-item';
+    const placeholder = document.createElement('div');
+    placeholder.className = 'att-chip';
     placeholder.dataset.id = attId;
     ul.appendChild(placeholder);
     renderAttachmentRow(attId, placeholder).catch(err => console.error('[notes] att render', err));
   }
+  // Update count label
+  const lbl = document.querySelector('.att-count-label');
+  if (lbl) lbl.textContent = `PRIVITCI · ${note.attachmentIds.length}`;
 }
 
 async function renderAttachmentRow(attId, li) {
+  // Release any existing object URL for this attachment so re-renders don't leak.
+  releaseObjectUrl(attId);
+
   const att = await getAttachment(state.db, attId);
 
   if (!att) {
-    li.innerHTML = `<span class="thumb">⚠</span><span class="name">privitak nedostaje</span><button type="button">✕</button>`;
+    li.className = 'att-chip missing';
+    li.innerHTML = `<span class="swatch">⚠</span><span class="name mono">privitak nedostaje</span><button class="ax" type="button" data-icon="x" aria-label="Ukloni"></button>`;
     li.querySelector('button').addEventListener('click', () => removeAttachmentClick(attId));
+    injectIcons(li);
     return;
   }
 
-  const url = URL.createObjectURL(att.blob);
-  objectUrls.set(attId, url);
-  const img = document.createElement('img');
-  img.className = 'thumb';
-  img.alt = '';
-  img.src = url;
-  img.onerror = () => { img.replaceWith(document.createTextNode('⚠')); };
-  img.addEventListener('click', () => openModal(url));
+  li.className = 'att-chip';
+  li.innerHTML = '';
 
+  // Swatch: thumbnail image if available, original blob if image but no thumb, doc icon if non-image
+  const swatch = document.createElement('span');
+  swatch.className = 'swatch';
+  if (att.mimeType && att.mimeType.startsWith('image/')) {
+    const useBlob = att.thumbBlob instanceof Blob ? att.thumbBlob : att.blob;
+    const url = URL.createObjectURL(useBlob);
+    objectUrls.set(attId, url);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    img.addEventListener('click', () => openModal(URL.createObjectURL(att.blob)));
+    img.onerror = () => { swatch.replaceWith(document.createTextNode('⚠')); };
+    swatch.appendChild(img);
+  } else {
+    // generic document badge
+    swatch.innerHTML = `<span data-icon="image"></span>`;
+  }
+
+  // Filename
   const name = document.createElement('span');
-  name.className = 'name';
-  name.textContent = `${att.filename} (${formatSize(att.size)})`;
+  name.className = 'name mono';
+  name.title = att.filename;
+  name.textContent = att.filename;
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.textContent = '✕';
-  btn.addEventListener('click', () => removeAttachmentClick(attId));
+  // Remove button
+  const ax = document.createElement('button');
+  ax.className = 'ax';
+  ax.type = 'button';
+  ax.setAttribute('aria-label', 'Ukloni');
+  ax.dataset.icon = 'x';
+  ax.addEventListener('click', () => removeAttachmentClick(attId));
 
-  li.append(img, name, btn);
+  li.append(swatch, name, ax);
+  injectIcons(li);
 }
 
 async function removeAttachmentClick(attId) {
@@ -374,6 +459,30 @@ function openModal(src) {
 
 function bindPasteHandler() {
   $('#editor-body').addEventListener('paste', onPaste);
+}
+
+function bindAttachAddHandler() {
+  const btn = $('#btn-add-att');
+  const input = $('#file-input');
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', () => input.click());
+  input.addEventListener('change', async (e) => {
+    if (!state.currentNoteId) return;
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    for (const f of files) {
+      try {
+        const att = await addAttachment(state.db, state.currentNoteId, f, f.type, f.name);
+        showToast(`${f.name} dodano (${formatSize(att.size)})`);
+      } catch (err) {
+        console.error('[notes] file add', err);
+        showToast('Greška pri dodavanju datoteke', 'error');
+      }
+    }
+    const note = await getNote(state.db, state.currentNoteId);
+    if (note) renderAttachments(note);
+  });
 }
 
 async function onPaste(e) {
@@ -417,6 +526,7 @@ async function onDeleteNoteClick() {
   if (!state.currentNoteId) return;
   if (!confirm('Obrisati ovu bilješku i sve privitke?')) return;
   unbindEditorEvents();
+  stopSaveStateTicker();
   await deleteNote(state.db, state.currentNoteId);
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
@@ -427,6 +537,7 @@ async function onDeleteNoteClick() {
 
 async function showList() {
   unbindEditorEvents();
+  stopSaveStateTicker();
   await flushAndPrune();
   for (const id of objectUrls.keys()) URL.revokeObjectURL(objectUrls.get(id));
   objectUrls.clear();
