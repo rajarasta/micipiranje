@@ -144,5 +144,54 @@ def test_extract_json_raises_value_error_on_invalid_json():
     )
 
     with patch.object(delegate_server, "_client", return_value=fake_client):
-        with pytest.raises(ValueError, match="model did not return valid JSON"):
+        with pytest.raises(ValueError, match=r"model did not return valid JSON.*raw="):
             delegate_server.extract_json(text="...", schema={"type": "object"})
+
+
+def test_summarize_chunk_returns_stripped_summary():
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        "  Cijena aluminija je porasla 12% u Q1 2024.  \n"
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.summarize_chunk(
+            text="long text about aluminum prices...",
+            focus="cijene",
+            max_words=50,
+        )
+
+    assert result == "Cijena aluminija je porasla 12% u Q1 2024."
+
+    call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["temperature"] == 0.2
+    assert call_kwargs["max_tokens"] == 200  # max_words * 4 (room for reasoning + summary)
+    assert call_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+    # System prompt should mention the focus when provided
+    sys_content = call_kwargs["messages"][0]["content"]
+    assert "cijene" in sys_content
+    # User message should be the input text
+    assert call_kwargs["messages"][1]["content"] == "long text about aluminum prices..."
+
+
+def test_summarize_chunk_omits_focus_clause_when_empty():
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion("Kratak sažetak.")
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        delegate_server.summarize_chunk(text="...", focus="", max_words=200)
+
+    sys_content = fake_client.chat.completions.create.call_args.kwargs["messages"][0][
+        "content"
+    ]
+    assert "Fokusiraj" not in sys_content

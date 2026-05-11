@@ -126,4 +126,53 @@ def extract_json(text: str, schema: dict[str, Any]) -> dict[str, Any]:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"model did not return valid JSON: {exc}; raw={raw!r}") from exc
+        raise ValueError(f"model did not return valid JSON: {exc}; raw={raw[:500]!r}") from exc
+
+
+@mcp.tool()
+def summarize_chunk(text: str, focus: str = "", max_words: int = 200) -> str:
+    """Summarise the provided text, optionally biased toward a topic.
+
+    Difference vs `delegate_task`: the text arrives in the argument; the
+    callee does not read files or use any tools. One LLM call, no agent loop.
+
+    max_tokens is set to `max_words * 4` to leave room for the model's
+    thinking-mode `reasoning_content` (which extra_body explicitly disables
+    but kept generous as belt-and-suspenders; see plan revision note).
+
+    Args:
+        text: Text to summarise (1-30k chars; longer inputs may be truncated
+            by the backend context window).
+        focus: Optional topic bias, e.g. "cijene", "rokovi", "kvarovi".
+            Empty string disables the focus clause.
+        max_words: Target summary length in words. Output is capped at
+            `max_words * 4` tokens.
+    """
+    focus_clause = f" Fokusiraj se posebno na: {focus}." if focus else ""
+    resp = _client().chat.completions.create(
+        model=_model(),
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Napravi koncizan sažetak (cilj ~{max_words} riječi)."
+                    f"{focus_clause} Vrati SAMO sažetak, bez uvoda."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0.2,
+        max_tokens=max_words * 4,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+if __name__ == "__main__":
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "http":
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+        mcp.settings.port = int(os.environ.get("MCP_PORT", "8095"))
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
