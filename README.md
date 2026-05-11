@@ -1,6 +1,6 @@
 # Local LLM workspace — MCP servers + launchers
 
-Self-contained collection of four MCP servers and the launcher scripts that run them alongside [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` (with the WebUI MCP proxy) and [LM Studio](https://lmstudio.ai/). Both clients are first-class — every server is reachable via HTTP for the WebUI and via stdio for LM Studio's `mcp.json`.
+Self-contained collection of five MCP servers and the launcher scripts that run them alongside [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` (with the WebUI MCP proxy) and [LM Studio](https://lmstudio.ai/). Both clients are first-class — every server is reachable via HTTP for the WebUI and via stdio for LM Studio's `mcp.json`.
 
 ## Components
 
@@ -12,14 +12,17 @@ Self-contained collection of four MCP servers and the launcher scripts that run 
 | `lm-web` | [web_server.py](web_server.py) | 8090 | Web search/fetch via SearXNG and direct HTTP |
 | `lm-xlsx` | [xlsx_server.py](xlsx_server.py) | 8091 | Read/inspect XLSX/CSV — see [XLSX_MCP_README.md](XLSX_MCP_README.md) |
 | `lm-pdf` | [pdf_server.py](pdf_server.py) | 8092 | Inspect, search, render, crop PDFs — see [PDF_MCP_README.md](PDF_MCP_README.md) |
+| `lm-delegate` | [delegate_server.py](delegate_server.py) | 8095 | `quick_classify` / `extract_json` / `summarize_chunk` — one-shot wrappers around a local OpenAI-compatible endpoint (default :8093). Powers the Hermes auxiliary-routing setup; see [docs/superpowers/specs/2026-05-11-hermes-aux-delegation-design.md](docs/superpowers/specs/2026-05-11-hermes-aux-delegation-design.md). |
 
-All four read from the same sandbox directory pointed at by the `LM_MCP_ROOT` environment variable (default in [start-mcp-http.sh](start-mcp-http.sh): `./lm-studio-sandbox`).
+The first four read from the same sandbox directory pointed at by the `LM_MCP_ROOT` environment variable (default in [start-mcp-http.sh](start-mcp-http.sh): `./lm-studio-sandbox`). `lm-delegate` is sandbox-independent — it only proxies LLM calls.
 
 ### Launchers
 
-- [start-mcp-http.sh](start-mcp-http.sh) — starts all four MCP servers in HTTP mode (background, PID files in `~/.local/state/llama-mcp/`).
+- [start-mcp-http.sh](start-mcp-http.sh) — starts all five MCP servers in HTTP mode (background, PID files in `~/.local/state/llama-mcp/`).
 - [stop-mcp-http.sh](stop-mcp-http.sh) — stops them.
-- [run-llama-server.sh](run-llama-server.sh) — foreground launcher for `llama-server` itself (Qwen3.5-9B by default, port 8033, with WebUI MCP proxy enabled).
+- [start-aux-llama.sh](start-aux-llama.sh) — starts two auxiliary llama-server endpoints on the RTX 5070 Ti: text on `:8093` (Qwen3.5-9B Q4, used by `lm-delegate` and Hermes auxiliary slots) and vision on `:8094` (gemma-4-E4B + mmproj, used by Hermes `auxiliary.vision`).
+- [stop-aux-llama.sh](stop-aux-llama.sh) — stops them. Stop `lm-delegate` (via `stop-mcp-http.sh`) before the aux endpoints to avoid connection-refused races.
+- [run-llama-server.sh](run-llama-server.sh) — foreground launcher for the main `llama-server` (orchestrator model, port 8033, with WebUI MCP proxy enabled).
 
 ### LM Studio frozen-copy fork ([lm-studio-mcp/](lm-studio-mcp/))
 
@@ -43,6 +46,7 @@ Then open `http://127.0.0.1:8033/` and add three MCP entries via the WebUI setti
 - `http://127.0.0.1:8090/mcp`
 - `http://127.0.0.1:8091/mcp`
 - `http://127.0.0.1:8092/mcp`
+- `http://127.0.0.1:8095/mcp` (lm-delegate)
 
 For each entry, enable the **"use llama-server proxy"** toggle. Stop with `./stop-mcp-http.sh`.
 
@@ -63,7 +67,8 @@ Add entries to `~/.lmstudio/mcp.json`:
     "lm-fs":   { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/server.py"],     "env": { "LM_MCP_ROOT": "/full/path/to/sandbox" } },
     "lm-web":  { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/web_server.py"],  "env": { "LM_MCP_ROOT": "/full/path/to/sandbox" } },
     "lm-xlsx": { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/xlsx_server.py"], "env": { "LM_MCP_ROOT": "/full/path/to/sandbox" } },
-    "lm-pdf":  { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/pdf_server.py"],  "env": { "LM_MCP_ROOT": "/full/path/to/sandbox" } }
+    "lm-pdf":  { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/pdf_server.py"],  "env": { "LM_MCP_ROOT": "/full/path/to/sandbox" } },
+    "lm-delegate": { "command": "/full/path/to/uv", "args": ["run", "--script", "/full/path/to/lm-studio-mcp/delegate_server.py"], "env": { "LM_DELEGATE_BACKEND_URL": "http://127.0.0.1:8093/v1", "LM_DELEGATE_MODEL": "qwen3.5-9b" } }
   }
 }
 ```

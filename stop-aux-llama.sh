@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Stops the two auxiliary llama-server processes started by start-aux-llama.sh.
+
 set -uo pipefail
 
 LOG_DIR="$HOME/.local/state/llama-mcp"
@@ -16,7 +18,7 @@ stop_server() {
   pid=$(cat "$pidfile")
   if kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid"
-    for _ in 1 2 3 4 5; do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
       kill -0 "$pid" 2>/dev/null || break
       sleep 0.5
     done
@@ -31,8 +33,5 @@ stop_server() {
   rm -f "$pidfile"
 }
 
-stop_server lm-fs
-stop_server lm-web
-stop_server lm-xlsx
-stop_server lm-pdf
-stop_server lm-delegate
+stop_server aux-text
+stop_server aux-vision
