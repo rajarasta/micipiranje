@@ -35,3 +35,4 @@ stop_server lm-fs
 stop_server lm-web
 stop_server lm-xlsx
 stop_server lm-pdf
+stop_server lm-delegate

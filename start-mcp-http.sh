@@ -40,6 +40,9 @@ start_one lm-web  8090 "$PROJECT_DIR/web_server.py" \
 start_one lm-xlsx 8091 "$PROJECT_DIR/xlsx_server.py"
 start_one lm-pdf  8092 "$PROJECT_DIR/pdf_server.py" \
   LM_PDF_INLINE_RENDER="${LM_PDF_INLINE_RENDER:-0}"
+start_one lm-delegate 8095 "$PROJECT_DIR/delegate_server.py" \
+  LM_DELEGATE_BACKEND_URL=http://127.0.0.1:8093/v1 \
+  LM_DELEGATE_MODEL=qwen3.5-9b
 
 echo
 echo "All MCP servers started. Endpoints:"
@@ -47,5 +50,6 @@ echo "  lm-fs   : http://127.0.0.1:8089/mcp"
 echo "  lm-web  : http://127.0.0.1:8090/mcp"
 echo "  lm-xlsx : http://127.0.0.1:8091/mcp"
 echo "  lm-pdf  : http://127.0.0.1:8092/mcp"
+echo "  lm-delegate : http://127.0.0.1:8095/mcp"
 echo
 echo "Stop with: ./stop-mcp-http.sh"
