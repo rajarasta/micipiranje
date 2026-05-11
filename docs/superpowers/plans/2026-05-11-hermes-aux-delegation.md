@@ -10,6 +10,8 @@
 
 **Spec reference:** [`docs/superpowers/specs/2026-05-11-hermes-aux-delegation-design.md`](../specs/2026-05-11-hermes-aux-delegation-design.md)
 
+**Plan revision 2026-05-11 (post-Task-3):** Task 3 smoke-testing revealed that Qwen3.5-9B (via `--jinja` template) activates **thinking mode** by default, emitting `reasoning_content` before the user-facing answer. A `max_tokens=20` budget burns entirely on reasoning, returning empty `content`. Tasks 5-7 below have been patched to (a) pass `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` so the model skips the reasoning phase, and (b) use generous `max_tokens` as a belt-and-suspenders so the call still produces output if the thinking-disable flag is ignored by a future llama.cpp build. Tests were updated to assert both. Hermes auxiliary slots (Task 10) inherit this via per-task `extra_body` in `config.yaml`.
+
 ---
 
 ## File Structure
@@ -442,10 +444,16 @@ def test_quick_classify_returns_label_when_in_list():
         )
 
     assert result == "aluminij"
-    # Verify temperature=0 was used
     call_kwargs = fake_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["temperature"] == 0.0
-    assert call_kwargs["max_tokens"] == 20
+    # Generous max_tokens accommodates thinking-mode reasoning_content
+    # (Qwen3.5-9B via --jinja activates thinking by default); see plan
+    # revision note at top of this file.
+    assert call_kwargs["max_tokens"] == 200
+    # Belt-and-suspenders: also explicitly disable thinking via extra_body.
+    assert call_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
 
 
 def test_quick_classify_falls_back_to_ostalo_when_model_returns_invalid():
@@ -522,7 +530,8 @@ def quick_classify(text: str, categories: list[str]) -> str:
             {"role": "user", "content": text},
         ],
         temperature=0.0,
-        max_tokens=20,
+        max_tokens=200,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     label = (resp.choices[0].message.content or "").strip()
     return label if label in categories else "ostalo"
@@ -592,6 +601,9 @@ def test_extract_json_parses_model_response():
     call_kwargs = fake_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["temperature"] == 0.0
     assert call_kwargs["response_format"] == {"type": "json_object"}
+    assert call_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
 
 
 def test_extract_json_raises_value_error_on_invalid_json():
@@ -657,6 +669,7 @@ def extract_json(text: str, schema: dict[str, Any]) -> dict[str, Any]:
         ],
         temperature=0.0,
         response_format={"type": "json_object"},
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     raw = resp.choices[0].message.content or ""
     try:
@@ -717,7 +730,10 @@ def test_summarize_chunk_returns_stripped_summary():
 
     call_kwargs = fake_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["temperature"] == 0.2
-    assert call_kwargs["max_tokens"] == 100  # max_words * 2
+    assert call_kwargs["max_tokens"] == 200  # max_words * 4 (room for reasoning + summary)
+    assert call_kwargs["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
     # System prompt should mention the focus when provided
     sys_content = call_kwargs["messages"][0]["content"]
     assert "cijene" in sys_content
@@ -783,7 +799,8 @@ def summarize_chunk(text: str, focus: str = "", max_words: int = 200) -> str:
             {"role": "user", "content": text},
         ],
         temperature=0.2,
-        max_tokens=max_words * 2,
+        max_tokens=max_words * 4,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     return (resp.choices[0].message.content or "").strip()
 ```
@@ -1017,18 +1034,28 @@ If `auxiliary:` already exists, edit in place (preserve siblings). If absent, ap
 If no `auxiliary:` block exists, append to `~/.hermes/config.yaml`:
 
 ```yaml
+# YAML anchor for the thinking-mode disable flag shared by all Qwen3.5-9B routes.
+# Without this, Qwen3.5-9B (via --jinja) emits reasoning_content first and burns
+# the token budget, leaving content="" for short outputs like titles. Hermes
+# auxiliary call_llm() passes extra_body straight through to the OpenAI request.
+_no_think: &no_think
+  chat_template_kwargs:
+    enable_thinking: false
+
 auxiliary:
   compression:
     base_url: "http://127.0.0.1:8093/v1"
     api_key: "no-key-required"
     model: "qwen3.5-9b"
     timeout: 60
+    extra_body: *no_think
 
   web_extract:
     base_url: "http://127.0.0.1:8093/v1"
     api_key: "no-key-required"
     model: "qwen3.5-9b"
     timeout: 60
+    extra_body: *no_think
 
   session_search:
     base_url: "http://127.0.0.1:8093/v1"
@@ -1036,16 +1063,19 @@ auxiliary:
     model: "qwen3.5-9b"
     timeout: 60
     max_concurrency: 3
+    extra_body: *no_think
 
   title_generation:
     base_url: "http://127.0.0.1:8093/v1"
     api_key: "no-key-required"
     model: "qwen3.5-9b"
+    extra_body: *no_think
 
   curator:
     base_url: "http://127.0.0.1:8093/v1"
     api_key: "no-key-required"
     model: "qwen3.5-9b"
+    extra_body: *no_think
 
   vision:
     base_url: "http://127.0.0.1:8094/v1"
@@ -1053,9 +1083,10 @@ auxiliary:
     model: "gemma-4-e4b-it"
     timeout: 60
     download_timeout: 30
+    # gemma-4 does not have thinking mode, so no extra_body needed for vision.
 ```
 
-If `auxiliary:` already exists, merge each task slot's keys under it instead.
+If `auxiliary:` already exists, merge each task slot's keys under it instead. The YAML anchor `&no_think` / `*no_think` is optional — you may inline the `extra_body: {chat_template_kwargs: {enable_thinking: false}}` block five times if you prefer no anchors.
 
 - [ ] **Step 4: Validate YAML syntax**
 
@@ -1095,6 +1126,10 @@ delegation:
 ```
 
 If `delegation:` already exists, merge the keys instead.
+
+**Note on thinking-mode in delegation children:** `tools/delegate_tool.py` does NOT read `delegation.extra_body` — child AIAgents spawn through the normal agent loop, not direct `call_llm()`. Thinking mode in Qwen3.5-9B may surface as long latency for short subagent tasks (the child generates a `<think>...</think>` block before its real action). If this becomes painful in Task 19 validation, the workaround is to (a) include "Do not use thinking mode" in the goal text when calling `delegate_task`, or (b) point `delegation.model` at a non-thinking model (e.g., load `gpt-oss-20b` on a third aux endpoint, off-plan). For now we accept the latency cost — children rarely run more than a few times per session, so the impact is much smaller than for auxiliary slots which fire on every compaction/title/etc.
+
+**`extra_body` for auxiliary:** confirmed by reading `agent/auxiliary_client.py:3690` (`_get_task_extra_body` reads `auxiliary.<task>.extra_body` and merges into the OpenAI request body). The YAML structure with the `&no_think` anchor in the auxiliary block above is what the resolver expects.
 
 - [ ] **Step 2: Append the mcp_servers entry**
 
