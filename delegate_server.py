@@ -83,3 +83,47 @@ def quick_classify(text: str, categories: list[str]) -> str:
     )
     label = (resp.choices[0].message.content or "").strip()
     return label if label in categories else "ostalo"
+
+
+@mcp.tool()
+def extract_json(text: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Extract structured data from free text according to a JSON Schema.
+
+    Uses the llama.cpp `response_format={"type": "json_object"}` grammar
+    constraint so the model is forced to emit valid JSON. The Qwen3.5-9B
+    thinking-mode flag is explicitly disabled via `extra_body` (see plan
+    revision note); JSON-grammar constraint is incompatible with thinking
+    in practice because reasoning_content is plain prose.
+
+    Args:
+        text: Source text (e.g. invoice line, log entry, free-form note).
+        schema: JSON Schema describing the desired output object.
+
+    Returns:
+        Parsed dict matching the schema.
+
+    Raises:
+        ValueError: If the model output is not valid JSON.
+    """
+    resp = _client().chat.completions.create(
+        model=_model(),
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Ekstrahiraj podatke u JSON koji točno odgovara ovoj schemi:\n"
+                    f"{json.dumps(schema, ensure_ascii=False)}\n"
+                    f"Vrati SAMO valid JSON, bez objašnjenja, bez code-fence-ova."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    raw = resp.choices[0].message.content or ""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"model did not return valid JSON: {exc}; raw={raw!r}") from exc
