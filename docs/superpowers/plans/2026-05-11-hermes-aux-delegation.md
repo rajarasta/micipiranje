@@ -12,6 +12,8 @@
 
 **Plan revision 2026-05-11 (post-Task-3):** Task 3 smoke-testing revealed that Qwen3.5-9B (via `--jinja` template) activates **thinking mode** by default, emitting `reasoning_content` before the user-facing answer. A `max_tokens=20` budget burns entirely on reasoning, returning empty `content`. Tasks 5-7 below have been patched to (a) pass `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` so the model skips the reasoning phase, and (b) use generous `max_tokens` as a belt-and-suspenders so the call still produces output if the thinking-disable flag is ignored by a future llama.cpp build. Tests were updated to assert both. Hermes auxiliary slots (Task 10) inherit this via per-task `extra_body` in `config.yaml`.
 
+**Plan revision 2026-05-11 (post-Task-12):** Task 12 wiring verification revealed that **Hermes enforces a minimum 64k context window for the auxiliary `compression` model** (`run_agent.py:3163`, constant `MINIMUM_CONTEXT_LENGTH` in `agent/model_metadata.py`). Hermes probes the live `/props` endpoint and rejects any model reporting <64k per slot. The original Task 1 config (`--ctx-size 8192 --parallel 3`) gives 2816 tokens per slot, well below the threshold. Forced trade-off: drop `--parallel` to 1 and raise `--ctx-size` to 65536 for the text endpoint. This loses the parallel-slot benefit for `session_search` (3 concurrent calls now queue at llama-server level instead of running in parallel slots), but is the only configuration that fits in VRAM on the RTX 5070 Ti. Specifically: weights 5.5 GB + KV at 65k Q8_0 ≈ 1.5 GB + compute 0.5 GB = ~7.5 GB on text endpoint, leaving room for the 4.5 GB vision endpoint. Tasks 1 and 10 were patched: start-aux-llama.sh aux-text block uses `--ctx-size 65536 --parallel 1`; config.yaml `auxiliary.session_search.max_concurrency` changed to 1 to match. Session_search parallelism would require either Q4_0 KV (potential quality regression) or a second text endpoint on the MI50 (architectural change out of scope).
+
 ---
 
 ## File Structure
@@ -111,8 +113,8 @@ start_one aux-text \
     --alias "qwen3.5-9b" \
     --host 127.0.0.1 --port 8093 \
     --n-gpu-layers 99 \
-    --ctx-size 8192 \
-    --parallel 3 \
+    --ctx-size 65536 \
+    --parallel 1 \
     --flash-attn on \
     --cache-type-k q8_0 \
     --cache-type-v q8_0 \
@@ -1104,7 +1106,7 @@ auxiliary:
     api_key: "no-key-required"
     model: "qwen3.5-9b"
     timeout: 60
-    max_concurrency: 3
+    max_concurrency: 1   # text endpoint has --parallel 1 (forced by Hermes 64k min); see plan revision note
     extra_body: *no_think
 
   title_generation:

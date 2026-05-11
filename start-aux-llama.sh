@@ -35,8 +35,8 @@ start_one aux-text \
     --alias "qwen3.5-9b" \
     --host 127.0.0.1 --port 8093 \
     --n-gpu-layers 99 \
-    --ctx-size 8192 \
-    --parallel 3 \
+    --ctx-size 65536 \
+    --parallel 1 \
     --flash-attn on \
     --cache-type-k q8_0 \
     --cache-type-v q8_0 \
