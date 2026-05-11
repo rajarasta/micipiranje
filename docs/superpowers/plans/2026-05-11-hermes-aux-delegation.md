@@ -814,12 +814,54 @@ cd "/media/josip-rastocic/DrugiDisk/Programi/LM STUDIO"
 
 Expected: 7 tests pass total.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Append the `__main__` runner block**
+
+The skeleton from Task 4 has no transport entry point — `uv run --script delegate_server.py` would do nothing useful. Append this block to the END of `delegate_server.py` so the server actually launches when `start-mcp-http.sh` invokes it in Task 8. This mirrors the pattern in `server.py` (lm-fs):
+
+```python
+
+
+if __name__ == "__main__":
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "http":
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+        mcp.settings.port = int(os.environ.get("MCP_PORT", "8095"))
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
+```
+
+The two blank lines before `if __name__` are intentional (PEP 8: two blank lines between top-level constructs).
+
+- [ ] **Step 6: Smoke the runner**
+
+Confirm both transports parse cleanly. Stdio:
+
+```bash
+cd "/media/josip-rastocic/DrugiDisk/Programi/LM STUDIO"
+~/.local/bin/uv run --script delegate_server.py </dev/null 2>&1 | head -5
+```
+
+Expected: stdio MCP handshake bytes on stdout (or graceful exit on EOF). No `SyntaxError` / `NameError`.
+
+HTTP:
+
+```bash
+MCP_TRANSPORT=http MCP_PORT=8095 ~/.local/bin/uv run --script delegate_server.py &
+SERVER_PID=$!
+sleep 3
+curl -s http://127.0.0.1:8095/mcp -X POST -H 'Content-Type: application/json' --max-time 2 | head -5 || echo "(curl handshake attempt finished)"
+kill $SERVER_PID 2>/dev/null
+```
+
+Expected: server starts on port 8095, accepts the POST handshake attempt. Exact response shape depends on FastMCP version; any 2xx/4xx response (not connection-refused) proves the runner works.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd "/media/josip-rastocic/DrugiDisk/Programi/LM STUDIO"
 git add delegate_server.py tests/test_delegate_server.py
-git commit -m "feat(lm-delegate): add summarize_chunk tool"
+git commit -m "feat(lm-delegate): add summarize_chunk tool + runner block"
 ```
 
 ---
