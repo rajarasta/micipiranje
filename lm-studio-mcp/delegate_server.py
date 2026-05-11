@@ -169,10 +169,7 @@ def summarize_chunk(text: str, focus: str = "", max_words: int = 200) -> str:
 
 
 if __name__ == "__main__":
-    transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    if transport == "http":
-        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
-        mcp.settings.port = int(os.environ.get("MCP_PORT", "8095"))
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+    # Stdio-only frozen copy for LM Studio (matches the other lm-studio-mcp/*.py).
+    # The HTTP variant of this server lives in ../delegate_server.py (root copy),
+    # invoked by start-mcp-http.sh.
+    mcp.run()
