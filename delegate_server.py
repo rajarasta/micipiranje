@@ -8,7 +8,7 @@
 # ///
 """LM Studio sandbox delegation MCP server.
 
-Exposes three lightweight one-shot tools that proxy to a local OpenAI-compatible
+Exposes five lightweight one-shot tools that proxy to a local OpenAI-compatible
 llama-server endpoint (default http://127.0.0.1:8093/v1). Each call is stateless;
 the tools never carry context across requests.
 
@@ -16,6 +16,8 @@ Tools:
   - quick_classify(text, categories)   -> single category label
   - extract_json(text, schema)         -> dict matching schema
   - summarize_chunk(text, focus, max_words) -> summary string
+  - read_with_focus(path, focus, max_words) -> summary + relevant line/page ranges
+  - rank_files(query, paths, preview_chars)  -> list of {path, score, reason} sorted desc
 
 Configuration via environment:
   LM_DELEGATE_BACKEND_URL  default: http://127.0.0.1:8093/v1
@@ -348,7 +350,7 @@ def rank_files(query: str, paths: list[str], preview_chars: int = 2000) -> list[
                 with pymupdf.open(str(p)) as doc:
                     text = doc[0].get_text()[:preview_chars]
                 previews[i] = text
-            except (pymupdf.FileDataError, IndexError):
+            except Exception:
                 errors[i] = "(unreadable PDF)"
         else:
             try:
