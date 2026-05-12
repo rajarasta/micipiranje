@@ -59,3 +59,117 @@ def test_summarize_chunk_live():
     result = delegate_server.summarize_chunk(text, focus="cijene", max_words=40)
     assert len(result) > 20
     assert "alumin" in result.lower() or "cijen" in result.lower()
+
+
+def test_read_with_focus_live(tmp_path):
+    import delegate_server
+
+    lines = [
+        "import math",
+        "",
+        "",
+        "def add(a, b):",
+        "    return a + b",
+        "",
+        "",
+        "def subtract(a, b):",
+        "    return a - b",
+        "",
+        "",
+        "def compute_tax(amount, rate):",
+        "    # Computes tax on amount using the provided rate.",
+        "    return amount * rate",
+        "",
+        "",
+        "def multiply(a, b):",
+        "    return a * b",
+        "",
+        "",
+        "def divide(a, b):",
+        "    if b == 0:",
+        "        raise ZeroDivisionError",
+        "    return a / b",
+        "",
+        "",
+        "def power(a, b):",
+        "    return a ** b",
+        "",
+        "",
+    ]
+    path = tmp_path / "math_utils.py"
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    result = delegate_server.read_with_focus(
+        path=str(path), focus="tax calculation", max_words=80
+    )
+
+    assert result["range_unit"] == "lines"
+    assert result["file_type"] == "python"
+    assert result["total_units"] == len(lines)
+
+    tax_line = next(
+        i for i, line in enumerate(lines, start=1) if "def compute_tax" in line
+    )
+    assert any(
+        start <= tax_line <= end for start, end in result["relevant_ranges"]
+    ), f"no range covers compute_tax at line {tax_line}: {result['relevant_ranges']}"
+
+    summary_lower = result["summary"].lower()
+    assert "tax" in summary_lower or "porez" in summary_lower
+
+
+def test_rank_files_live(tmp_path):
+    import delegate_server
+
+    http_file = tmp_path / "http_server.py"
+    http_file.write_text(
+        "from http.server import HTTPServer, BaseHTTPRequestHandler\n"
+        "\n"
+        "class Handler(BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200)\n"
+        "        self.end_headers()\n"
+        "        self.wfile.write(b'hello')\n"
+        "\n"
+        "def main():\n"
+        "    server = HTTPServer(('127.0.0.1', 8080), Handler)\n"
+        "    server.serve_forever()\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )
+
+    tax_file = tmp_path / "tax_calc.py"
+    tax_file.write_text(
+        "def compute_vat(amount, rate=0.25):\n"
+        "    return amount * rate\n"
+        "\n"
+        "def apply_discount(amount, pct):\n"
+        "    return amount * (1 - pct / 100)\n"
+        "\n"
+        "def total_with_tax(items, rate):\n"
+        "    return sum(items) * (1 + rate)\n",
+        encoding="utf-8",
+    )
+
+    utils_file = tmp_path / "string_utils.py"
+    utils_file.write_text(
+        "def slugify(s):\n"
+        "    return s.lower().replace(' ', '-')\n"
+        "\n"
+        "def truncate(s, n):\n"
+        "    return s[:n] + '...' if len(s) > n else s\n"
+        "\n"
+        "def reverse(s):\n"
+        "    return s[::-1]\n",
+        encoding="utf-8",
+    )
+
+    paths = [str(tax_file), str(utils_file), str(http_file)]
+    result = delegate_server.rank_files(query="HTTP server setup", paths=paths)
+
+    assert len(result) == 3
+    assert result[0]["path"] == str(http_file), (
+        f"expected HTTP server file at top, got: {result}"
+    )
