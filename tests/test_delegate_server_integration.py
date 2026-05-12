@@ -103,12 +103,14 @@ def test_read_with_focus_live(tmp_path):
         path=str(path), focus="tax calculation", max_words=80
     )
 
+    expected_total = len(path.read_text(encoding="utf-8").splitlines())
     assert result["range_unit"] == "lines"
     assert result["file_type"] == "python"
-    assert result["total_units"] == len(lines)
+    assert result["total_units"] == expected_total
 
+    file_lines = path.read_text(encoding="utf-8").splitlines()
     tax_line = next(
-        i for i, line in enumerate(lines, start=1) if "def compute_tax" in line
+        i for i, line in enumerate(file_lines, start=1) if "def compute_tax" in line
     )
     assert any(
         start <= tax_line <= end for start, end in result["relevant_ranges"]
