@@ -11,6 +11,9 @@ __pycache__/
 # Runtime sandbox — contains user PDFs and per-render cache (.lm-pdf-cache/)
 lm-studio-sandbox/
 
+# Hermes-generated working dir (user content + outputs, not codebase)
+feal-fasada/
+
 # Large binaries — never commit
 modeli/
 *.gguf
