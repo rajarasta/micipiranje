@@ -539,3 +539,39 @@ def test_rank_files_pdf_preview_uses_only_first_page(tmp_path):
     assert "PAGE_ONE_MARKER" in user_msg
     # Pages 2+ should NOT appear in the prompt
     assert "PAGE_TWO_MARKER" not in user_msg
+
+
+def test_rank_files_malformed_item_treated_as_omitted(tmp_path):
+    """Item with valid index but missing 'reason' → score=0, reason='(model omitted)'."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    f0 = tmp_path / "file0.txt"
+    f1 = tmp_path / "file1.txt"
+    f0.write_text("content of file zero")
+    f1.write_text("content of file one")
+
+    paths = [str(f0), str(f1)]
+
+    fake_client = MagicMock()
+    # Second item has score but is missing 'reason' → should be treated as omitted
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"rankings": ['
+        '{"index": 0, "score": 7, "reason": "ok"},'
+        '{"index": 1, "score": 5}'
+        ']}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.rank_files(query="test query", paths=paths)
+
+    result_by_path = {item["path"]: item for item in result}
+
+    # Well-formed item: normal score and reason
+    assert result_by_path[str(f0)]["score"] == 7
+    assert result_by_path[str(f0)]["reason"] == "ok"
+
+    # Malformed item (missing 'reason'): treated as omitted
+    assert result_by_path[str(f1)]["score"] == 0
+    assert result_by_path[str(f1)]["reason"] == "(model omitted)"

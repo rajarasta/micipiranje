@@ -423,14 +423,17 @@ def rank_files(query: str, paths: list[str], preview_chars: int = 2000) -> list[
             results.append({"path": path, "score": 0, "reason": errors[i]})
         elif i in model_by_index:
             item = model_by_index[i]
-            raw_score = item.get("score", 0)
-            try:
-                score = max(0, min(10, int(raw_score)))
-                reason = str(item.get("reason", ""))
-            except (TypeError, ValueError):
-                score = 0
-                reason = "(invalid score)"
-            results.append({"path": path, "score": score, "reason": reason})
+            if "score" not in item or "reason" not in item:
+                results.append({"path": path, "score": 0, "reason": "(model omitted)"})
+            else:
+                raw_score = item["score"]
+                try:
+                    score = max(0, min(10, int(raw_score)))
+                    reason = str(item["reason"])
+                except (TypeError, ValueError):
+                    score = 0
+                    reason = "(invalid score)"
+                results.append({"path": path, "score": score, "reason": reason})
         else:
             results.append({"path": path, "score": 0, "reason": "(model omitted)"})
 
