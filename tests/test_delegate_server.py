@@ -195,3 +195,142 @@ def test_summarize_chunk_omits_focus_clause_when_empty():
         "content"
     ]
     assert "Fokusiraj" not in sys_content
+
+
+# ---------------------------------------------------------------------------
+# read_with_focus tests (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_read_with_focus_text_file_returns_summary_and_line_ranges(tmp_path):
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    # 30-line Python file (one-liner functions, one line each)
+    py_file = tmp_path / "module.py"
+    lines = [f"def foo_{n}(): pass" for n in range(1, 31)]
+    py_file.write_text("\n".join(lines) + "\n")
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"summary": "Found tax fn at lines 5-10", "relevant_ranges": [[5, 10]], "range_unit": "lines"}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.read_with_focus(
+            path=str(py_file), focus="tax functions"
+        )
+
+    assert "summary" in result
+    assert result["relevant_ranges"] == [(5, 10)]
+    assert result["range_unit"] == "lines"
+    assert result["total_units"] == 30
+    assert result["file_type"] == "python"
+
+    call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+    sys_msg = call_kwargs["messages"][0]["content"]
+    assert "tax functions" in sys_msg
+    user_msg = call_kwargs["messages"][1]["content"]
+    assert "L1: " in user_msg
+    assert call_kwargs["temperature"] == 0.2
+    assert call_kwargs["response_format"] == {"type": "json_object"}
+    assert call_kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_read_with_focus_pdf_file_returns_page_ranges(tmp_path):
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+    import pymupdf
+
+    pdf_file = tmp_path / "document.pdf"
+    doc = pymupdf.open()
+    page1 = doc.new_page()
+    page1.insert_text((72, 72), "Page one content about invoices")
+    page2 = doc.new_page()
+    page2.insert_text((72, 72), "Page two content about contracts")
+    doc.save(str(pdf_file))
+    doc.close()
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"summary": "Invoice on page 1", "relevant_ranges": [[1, 1]], "range_unit": "pages"}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.read_with_focus(
+            path=str(pdf_file), focus="invoices"
+        )
+
+    assert result["range_unit"] == "pages"
+    assert result["total_units"] == 2
+    assert result["file_type"] == "pdf"
+
+    call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+    user_msg = call_kwargs["messages"][1]["content"]
+    assert "=== PAGE 1 ===" in user_msg
+    assert "=== PAGE 2 ===" in user_msg
+
+
+def test_read_with_focus_empty_file_skips_llm(tmp_path):
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("")
+
+    fake_client = MagicMock()
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.read_with_focus(
+            path=str(empty_file), focus="anything"
+        )
+
+    fake_client.chat.completions.create.assert_not_called()
+    assert result["summary"] == "(empty file)"
+    assert result["relevant_ranges"] == []
+    assert result["range_unit"] == "lines"
+    assert result["total_units"] == 0
+    assert result["file_type"] == "text"
+
+
+def test_read_with_focus_binary_raises(tmp_path):
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    bin_file = tmp_path / "image.png"
+    bin_file.write_bytes(b"\x80\x81\x82\xff\xfe")
+
+    with pytest.raises(ValueError, match="binary"):
+        delegate_server.read_with_focus(path=str(bin_file), focus="anything")
+
+
+def test_read_with_focus_missing_path_raises():
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    with pytest.raises(FileNotFoundError):
+        delegate_server.read_with_focus(
+            path="/nonexistent/path/does_not_exist.txt", focus="anything"
+        )
+
+
+def test_read_with_focus_file_too_large_raises(tmp_path):
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    large_file = tmp_path / "big.txt"
+    large_file.write_text("x" * 250_000)
+
+    fake_client = MagicMock()
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        with pytest.raises(ValueError, match="file too large"):
+            delegate_server.read_with_focus(path=str(large_file), focus="anything")
+
+    fake_client.chat.completions.create.assert_not_called()
