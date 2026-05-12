@@ -334,3 +334,22 @@ def test_read_with_focus_file_too_large_raises(tmp_path):
             delegate_server.read_with_focus(path=str(large_file), focus="anything")
 
     fake_client.chat.completions.create.assert_not_called()
+
+
+def test_read_with_focus_malformed_range_raises(tmp_path):
+    """Model returning a range with wrong element count → ValueError, not silent pass-through."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    txt_file = tmp_path / "sample.txt"
+    txt_file.write_text("line one\nline two\nline three\n")
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"summary": "ok", "relevant_ranges": [[1, 5, 3]], "range_unit": "lines"}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        with pytest.raises(ValueError, match="malformed range"):
+            delegate_server.read_with_focus(path=str(txt_file), focus="anything")

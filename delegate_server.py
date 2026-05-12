@@ -224,15 +224,15 @@ def read_with_focus(path: str, focus: str, max_words: int = 200) -> dict[str, An
     # --- Read content ---
     if file_type == "pdf":
         try:
-            doc = pymupdf.open(str(p))
-            pages_text: list[str] = []
-            for i, page in enumerate(doc, start=1):
-                pages_text.append(f"=== PAGE {i} ===\n{page.get_text()}")
-            doc.close()
-            total_units = len(pages_text)
-            content = "\n".join(pages_text)
+            with pymupdf.open(str(p)) as doc:
+                pages_text = [
+                    f"=== PAGE {i} ===\n{page.get_text()}"
+                    for i, page in enumerate(doc, start=1)
+                ]
         except Exception as exc:
             raise ValueError(f"PDF read failed: {exc}") from exc
+        total_units = len(pages_text)
+        content = "\n".join(pages_text)
     else:
         try:
             content = p.read_text(encoding="utf-8")
@@ -295,10 +295,12 @@ def read_with_focus(path: str, focus: str, max_words: int = 200) -> dict[str, An
         ) from exc
 
     # Deterministically set range_unit from file_type (never trust LLM)
-    # Convert relevant_ranges to list of tuples
-    relevant_ranges: list[tuple[int, int]] = [
-        tuple(r) for r in parsed.get("relevant_ranges", [])  # type: ignore[misc]
-    ]
+    # Convert relevant_ranges to list of tuples, validating each entry
+    relevant_ranges: list[tuple[int, int]] = []
+    for r in parsed.get("relevant_ranges", []):
+        if not (isinstance(r, list) and len(r) == 2 and all(isinstance(v, int) for v in r)):
+            raise ValueError(f"model returned malformed range: {r!r}")
+        relevant_ranges.append((r[0], r[1]))
 
     return {
         "summary": parsed.get("summary", ""),
