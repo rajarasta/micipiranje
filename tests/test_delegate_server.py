@@ -575,3 +575,37 @@ def test_rank_files_malformed_item_treated_as_omitted(tmp_path):
     # Malformed item (missing 'reason'): treated as omitted
     assert result_by_path[str(f1)]["score"] == 0
     assert result_by_path[str(f1)]["reason"] == "(model omitted)"
+
+
+def test_rank_files_item_missing_score_also_treated_as_omitted(tmp_path):
+    """Symmetric to the missing-reason case: item missing 'score' is also omitted."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    f0 = tmp_path / "file0.txt"
+    f1 = tmp_path / "file1.txt"
+    f0.write_text("content of file zero")
+    f1.write_text("content of file one")
+
+    paths = [str(f0), str(f1)]
+
+    fake_client = MagicMock()
+    # Second item has reason but is missing 'score' → should be treated as omitted
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"rankings": ['
+        '{"index": 0, "score": 8, "reason": "good"},'
+        '{"index": 1, "reason": "no score field"}'
+        ']}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.rank_files(query="test query", paths=paths)
+
+    result_by_path = {item["path"]: item for item in result}
+
+    assert result_by_path[str(f0)]["score"] == 8
+    assert result_by_path[str(f0)]["reason"] == "good"
+
+    assert result_by_path[str(f1)]["score"] == 0
+    assert result_by_path[str(f1)]["reason"] == "(model omitted)"

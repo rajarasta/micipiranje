@@ -199,8 +199,10 @@ def rank_files(query: str, paths: list[str], preview_chars: int = 2000) -> list[
        "Query: {query}
         Score each file 0-10 for relevance (10 = exactly what query asks about, 
         0 = unrelated). Return JSON exactly matching:
-        [{\"index\": <int>, \"score\": <int 0-10>, \"reason\": <short string>}, ...]
+        {\"rankings\": [{\"index\": <int>, \"score\": <int 0-10>, \"reason\": <short string>}, ...]}
         One object per file. Reason: max 15 words."
+     (Wrapped in an outer object because `response_format={"type": "json_object"}`
+     requires the top-level value to be an object, not a bare array.)
    - user: concatenated previews like:
        "[0] /path/to/file.py
         <preview text>
@@ -214,7 +216,7 @@ def rank_files(query: str, paths: list[str], preview_chars: int = 2000) -> list[
 
 5. Single LLM call (same params as 4.1 step 7, but max_tokens = 50 * len(paths) + 500).
 
-6. Parse JSON list. For each item:
+6. Parse JSON. Extract `rankings` list from the top-level object. For each item:
    - If index in errors: emit {path, score: 0, reason: errors[index]}
    - Else: emit {path: paths[index], score: clamp(score, 0, 10), reason: reason}
    - Missing indices in model output: emit {path, score: 0, reason: "(model omitted)"}
