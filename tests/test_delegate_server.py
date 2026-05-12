@@ -353,3 +353,189 @@ def test_read_with_focus_malformed_range_raises(tmp_path):
     with patch.object(delegate_server, "_client", return_value=fake_client):
         with pytest.raises(ValueError, match="malformed range"):
             delegate_server.read_with_focus(path=str(txt_file), focus="anything")
+
+
+# ---------------------------------------------------------------------------
+# rank_files tests (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_rank_files_batched_returns_sorted_results(tmp_path):
+    """Three files ranked by model; result sorted DESC by score."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    f0 = tmp_path / "alpha.txt"
+    f1 = tmp_path / "beta.txt"
+    f2 = tmp_path / "gamma.txt"
+    f0.write_text("alpha content about invoices")
+    f1.write_text("beta content: exact match for query")
+    f2.write_text("gamma content: unrelated stuff")
+
+    paths = [str(f0), str(f1), str(f2)]
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"rankings": ['
+        '{"index": 1, "score": 9, "reason": "exact match"},'
+        '{"index": 0, "score": 4, "reason": "tangential"},'
+        '{"index": 2, "score": 2, "reason": "unrelated"}'
+        ']}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.rank_files(
+            query="find invoice-related files",
+            paths=paths,
+        )
+
+    # Single LLM call
+    fake_client.chat.completions.create.assert_called_once()
+
+    # Sorted DESC by score
+    assert result[0]["path"] == str(f1)
+    assert result[0]["score"] == 9
+    assert result[1]["score"] == 4
+    assert result[2]["score"] == 2
+
+    # All results have required keys
+    for item in result:
+        assert "path" in item
+        assert "score" in item
+        assert "reason" in item
+
+    call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["temperature"] == 0.2
+    assert call_kwargs["response_format"] == {"type": "json_object"}
+    assert call_kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    # System prompt contains the query
+    sys_msg = call_kwargs["messages"][0]["content"]
+    assert "find invoice-related files" in sys_msg
+
+    # User message contains index markers and file paths
+    user_msg = call_kwargs["messages"][1]["content"]
+    assert "[0]" in user_msg
+    assert "[1]" in user_msg
+    assert "[2]" in user_msg
+    assert str(f0) in user_msg
+    assert str(f1) in user_msg
+    assert str(f2) in user_msg
+
+
+def test_rank_files_empty_paths_skips_llm():
+    """Empty paths list returns [] without any LLM call."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    fake_client = MagicMock()
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.rank_files(query="anything", paths=[])
+
+    assert result == []
+    fake_client.chat.completions.create.assert_not_called()
+
+
+def test_rank_files_missing_path_gets_zero(tmp_path):
+    """A non-existent path gets score=0 and reason='(file not found)'; batch continues."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    f0 = tmp_path / "exists1.txt"
+    f2 = tmp_path / "exists2.txt"
+    f0.write_text("content of first file")
+    f2.write_text("content of third file")
+
+    paths = [str(f0), "/nonexistent/file.txt", str(f2)]
+
+    fake_client = MagicMock()
+    # Model only returns rankings for index 0 and 2 (skips missing index 1)
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"rankings": ['
+        '{"index": 0, "score": 7, "reason": "relevant"},'
+        '{"index": 2, "score": 3, "reason": "partial"}'
+        ']}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        result = delegate_server.rank_files(query="test query", paths=paths)
+
+    # Result list length matches input
+    assert len(result) == 3
+
+    # Find the entry for the missing path
+    result_by_path = {item["path"]: item for item in result}
+    missing_entry = result_by_path["/nonexistent/file.txt"]
+    assert missing_entry["score"] == 0
+    assert missing_entry["reason"] == "(file not found)"
+
+    # Other two paths have model-provided scores
+    assert result_by_path[str(f0)]["score"] == 7
+    assert result_by_path[str(f2)]["score"] == 3
+
+
+def test_rank_files_budget_exceeded_raises(tmp_path):
+    """Budget > 60k tokens raises ValueError BEFORE any LLM call."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+
+    # 30 files * 10_000 chars preview each → budget = (300_000 // 4) + (50 * 30) = 75_000 + 1_500 = 76_500 > 60k
+    # Must pass preview_chars=10_000 so that all chars are actually loaded into previews[i].
+    files = []
+    for i in range(30):
+        f = tmp_path / f"file_{i}.txt"
+        f.write_text("x" * 10_000)
+        files.append(str(f))
+
+    fake_client = MagicMock()
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        with pytest.raises(ValueError, match="token budget exceeded"):
+            delegate_server.rank_files(query="any query", paths=files, preview_chars=10_000)
+
+    # LLM must NOT have been called
+    fake_client.chat.completions.create.assert_not_called()
+
+
+def test_rank_files_pdf_preview_uses_only_first_page(tmp_path):
+    """PDF ranking only reads page 1; later pages must not appear in the prompt."""
+    import importlib
+    import delegate_server
+    importlib.reload(delegate_server)
+    import pymupdf
+
+    pdf_file = tmp_path / "multipage.pdf"
+    doc = pymupdf.open()
+    for i, marker in enumerate(
+        ["PAGE_ONE_MARKER", "PAGE_TWO_MARKER", "PAGE_THREE_MARKER",
+         "PAGE_FOUR_MARKER", "PAGE_FIVE_MARKER"],
+        start=1,
+    ):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"This is page {i} with marker {marker}")
+    doc.save(str(pdf_file))
+    doc.close()
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = _fake_completion(
+        '{"rankings": [{"index": 0, "score": 5, "reason": "pdf file"}]}'
+    )
+
+    with patch.object(delegate_server, "_client", return_value=fake_client):
+        delegate_server.rank_files(
+            query="find marker content",
+            paths=[str(pdf_file)],
+        )
+
+    call_kwargs = fake_client.chat.completions.create.call_args.kwargs
+    user_msg = call_kwargs["messages"][1]["content"]
+
+    # Page 1 content should be present
+    assert "PAGE_ONE_MARKER" in user_msg
+    # Pages 2+ should NOT appear in the prompt
+    assert "PAGE_TWO_MARKER" not in user_msg

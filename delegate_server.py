@@ -311,6 +311,134 @@ def read_with_focus(path: str, focus: str, max_words: int = 200) -> dict[str, An
     }
 
 
+@mcp.tool()
+def rank_files(query: str, paths: list[str], preview_chars: int = 2000) -> list[dict[str, Any]]:
+    """Rank files by relevance to query via a single batched LLM call.
+
+    For each path, reads up to preview_chars (or first page only for PDFs).
+    Files that fail to open get score 0 with reason "(file not found)" or
+    "(unreadable)" — they do not abort the batch.
+
+    Total preview tokens are estimated against 60k budget; exceeds budget
+    raises ValueError. The caller should pre-filter (e.g. via search_files
+    or grep) if too many candidates.
+
+    Returns:
+        list of dicts sorted by score descending:
+          [{path: str, score: int (0-10), reason: str}, ...]
+
+    Raises:
+        ValueError: estimated token budget exceeds 60k.
+    """
+    # 1. Empty input fast path
+    if not paths:
+        return []
+
+    # 2. Read previews for each path
+    previews: list[str | None] = [None] * len(paths)
+    errors: dict[int, str] = {}
+
+    for i, path in enumerate(paths):
+        p = Path(path)
+        if not p.exists():
+            errors[i] = "(file not found)"
+            continue
+        if p.suffix.lower() == ".pdf":
+            try:
+                with pymupdf.open(str(p)) as doc:
+                    text = doc[0].get_text()[:preview_chars]
+                previews[i] = text
+            except (pymupdf.FileDataError, IndexError):
+                errors[i] = "(unreadable PDF)"
+        else:
+            try:
+                previews[i] = p.read_text(encoding="utf-8")[:preview_chars]
+            except UnicodeDecodeError:
+                errors[i] = "(binary)"
+            except OSError:
+                errors[i] = "(unreadable)"
+
+    # 3. Estimate token budget
+    budget = sum(len(p) for p in previews if p is not None) // 4 + (50 * len(paths))
+    if budget > 60_000:
+        raise ValueError(
+            f"rank_files token budget exceeded ({budget} > 60000); "
+            f"consider smaller preview_chars or fewer paths"
+        )
+
+    # 4. Build prompt
+    system_prompt = (
+        f"Query: {query}\n"
+        f"Score each file 0-10 for relevance (10 = exactly what query asks about, "
+        f"0 = unrelated). Return JSON exactly matching:\n"
+        f'  {{"rankings": [{{"index": <int>, "score": <int 0-10>, "reason": <short string>}}, ...]}}\n'
+        f"One object per file. Reason: max 15 words."
+    )
+
+    user_parts: list[str] = []
+    for i, path in enumerate(paths):
+        if i in errors:
+            user_parts.append(f"[{i}] {path}\n(could not load)")
+        else:
+            user_parts.append(f"[{i}] {path}\n{previews[i]}")
+    user_message = "\n\n".join(user_parts)
+
+    # 5. Single LLM call
+    max_tokens = 50 * len(paths) + 500
+    resp = _client().chat.completions.create(
+        model=_model(),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.2,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+
+    # 6. Parse JSON
+    raw = resp.choices[0].message.content or ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"model did not return valid JSON; raw={raw[:500]!r}") from exc
+
+    rankings_raw = parsed.get("rankings", [])
+
+    # Build index → model output mapping, handling malformed items
+    model_by_index: dict[int, dict[str, Any]] = {}
+    for item in rankings_raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("index")
+        if idx is None or not isinstance(idx, int):
+            continue
+        model_by_index[idx] = item
+
+    # Build result list preserving original path order
+    results: list[dict[str, Any]] = []
+    for i, path in enumerate(paths):
+        if i in errors:
+            results.append({"path": path, "score": 0, "reason": errors[i]})
+        elif i in model_by_index:
+            item = model_by_index[i]
+            raw_score = item.get("score", 0)
+            try:
+                score = max(0, min(10, int(raw_score)))
+                reason = str(item.get("reason", ""))
+            except (TypeError, ValueError):
+                score = 0
+                reason = "(invalid score)"
+            results.append({"path": path, "score": score, "reason": reason})
+        else:
+            results.append({"path": path, "score": 0, "reason": "(model omitted)"})
+
+    # 7. Sort by score descending (stable — preserves original order for ties)
+    results.sort(key=lambda x: -x["score"])
+    return results
+
+
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
