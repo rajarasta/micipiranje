@@ -20,12 +20,23 @@ export async function createNote(db) {
 export async function getNote(db, id) {
   const raw = await get(db, 'notes', id);
   if (!raw) return raw;
+  if (raw.deletedAt) return undefined;
   return { pinned: false, tags: [], ...raw };
+}
+
+export async function getNoteRaw(db, id) {
+  return get(db, 'notes', id);
 }
 
 export async function listNotes(db) {
   const rows = await listByIndex(db, 'notes', 'updatedAt', 'prev');
-  return rows.map(r => ({ pinned: false, tags: [], ...r }));
+  return rows
+    .filter(r => !r.deletedAt)
+    .map(r => ({ pinned: false, tags: [], ...r }));
+}
+
+export async function listAllNotesIncludingTombstones(db) {
+  return listByIndex(db, 'notes', 'updatedAt', 'prev');
 }
 
 const ALLOWED_UPDATE_FIELDS = ['title', 'body'];
@@ -103,13 +114,16 @@ export async function removeAttachment(db, noteId, attachmentId) {
 export async function deleteNote(db, id) {
   const note = await getNote(db, id);
   if (!note) return;
-
-  await runTx(db, ['notes', 'attachments'], 'readwrite', (tx) => {
-    const attStore = tx.objectStore('attachments');
-    for (const attId of note.attachmentIds) {
-      attStore.delete(attId);
-    }
-    tx.objectStore('notes').delete(id);
+  const now = Date.now();
+  await put(db, 'notes', {
+    ...note,
+    title: '',
+    body: '',
+    attachmentIds: [],
+    tags: [],
+    pinned: false,
+    deletedAt: now,
+    updatedAt: now
   });
 }
 

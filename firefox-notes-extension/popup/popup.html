@@ -14,6 +14,7 @@
       <header class="lh-head">
         <h1>Bilješke</h1>
         <span id="launcher-stats" class="mono muted"></span>
+        <button id="btn-settings" class="btn ghost icon settings-btn" type="button" data-icon="gear" aria-label="Sync postavke"></button>
       </header>
       <div class="lh-hero">
         <button id="hero-new" class="big" type="button">
@@ -83,6 +84,29 @@
 
     <div id="modal" class="modal hidden">
       <img id="modal-img" alt="Pregled privitka">
+    </div>
+
+    <div id="modal-settings" class="modal hidden">
+      <div class="settings-card">
+        <header class="settings-head">
+          <h2>Sync postavke</h2>
+          <button id="settings-close" class="btn ghost icon" type="button" data-icon="x" aria-label="Zatvori"></button>
+        </header>
+        <label class="settings-row">
+          <span class="section-label mono">SERVER URL</span>
+          <input id="settings-url" type="url" placeholder="https://biljeske-sync.fly.dev" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="settings-row">
+          <span class="section-label mono">TOKEN</span>
+          <input id="settings-token" type="password" placeholder="bearer secret" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="settings-actions">
+          <button id="settings-test" class="btn" type="button">Provjeri</button>
+          <button id="settings-save" class="btn primary" type="button">Spremi</button>
+          <button id="settings-sync-now" class="btn" type="button"><span data-icon="refresh"></span> Sinkroniziraj</button>
+        </div>
+        <p id="settings-status" class="mono muted settings-status"></p>
+      </div>
     </div>
   </main>
   <script type="module" src="popup.js"></script>

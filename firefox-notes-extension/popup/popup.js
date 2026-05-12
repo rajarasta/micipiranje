@@ -3,6 +3,7 @@ import { createNote, listNotes, getNote, searchNotes, updateNote, deleteNote, ad
 import { parsePaste } from '../lib/clipboard.js';
 import { groupNotesByDate } from '../lib/grouping.js';
 import { iconHtml } from './icons.js';
+import { getSyncConfig, setSyncConfig, runSync, pingServer, checkAuth, isConfigured } from '../lib/sync.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -89,6 +90,134 @@ function formatAge(ms) {
   return `${Math.floor(ms / (30 * 86_400_000))}mj`;
 }
 
+const SYNC_DEBOUNCE_MS = 2000;
+let syncDebounceTimer = null;
+
+function getBrowserApi() {
+  return (typeof browser !== 'undefined') ? browser
+       : (typeof chrome !== 'undefined') ? chrome
+       : null;
+}
+
+function originFromUrl(url) {
+  try { return new URL(url).origin + '/*'; }
+  catch { return null; }
+}
+
+async function ensureHostPermission(serverUrl) {
+  const api = getBrowserApi();
+  const origin = originFromUrl(serverUrl);
+  if (!api || !api.permissions || !origin) return true;
+  try {
+    const granted = await api.permissions.contains({ origins: [origin] });
+    if (granted) return true;
+    return await api.permissions.request({ origins: [origin] });
+  } catch (err) {
+    console.warn('[sync] permission check failed', err);
+    return false;
+  }
+}
+
+function setSyncStatus(text, kind) {
+  const el = $('#settings-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('ok', 'error');
+  if (kind) el.classList.add(kind);
+}
+
+function scheduleSync() {
+  if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    syncDebounceTimer = null;
+    runSync(state.db).catch(err => console.warn('[sync] background sync failed', err));
+  }, SYNC_DEBOUNCE_MS);
+}
+
+async function syncOnStartup() {
+  try {
+    const cfg = await getSyncConfig(state.db);
+    if (!isConfigured(cfg)) return;
+    const api = getBrowserApi();
+    const origin = originFromUrl(cfg.serverUrl);
+    if (api && api.permissions && origin) {
+      const granted = await api.permissions.contains({ origins: [origin] });
+      if (!granted) return;
+    }
+    await runSync(state.db);
+    if (state.view === 'launcher') await renderLauncher();
+    else if (state.view === 'list') await renderList();
+  } catch (err) {
+    console.warn('[sync] startup sync failed', err);
+  }
+}
+
+async function openSettingsModal() {
+  const cfg = await getSyncConfig(state.db);
+  $('#settings-url').value = (cfg && cfg.serverUrl) || '';
+  $('#settings-token').value = (cfg && cfg.token) || '';
+  if (cfg && cfg.lastSyncResult && cfg.lastSyncResult.at) {
+    const age = Date.now() - cfg.lastSyncResult.at;
+    setSyncStatus(`Zadnji sync · ${formatAge(age)} · ${cfg.lastSyncResult.pulled} preuzeto, ${cfg.lastSyncResult.pushed} poslano`, 'ok');
+  } else if (cfg && cfg.lastSyncError) {
+    setSyncStatus(`Greška: ${cfg.lastSyncError.message}`, 'error');
+  } else {
+    setSyncStatus('', null);
+  }
+  $('#modal-settings').classList.remove('hidden');
+  injectIcons($('#modal-settings'));
+}
+
+function closeSettingsModal() {
+  $('#modal-settings').classList.add('hidden');
+}
+
+async function handleSettingsTest() {
+  const url = $('#settings-url').value.trim();
+  const token = $('#settings-token').value;
+  if (!url || !token) { setSyncStatus('Unesi URL i token', 'error'); return; }
+  setSyncStatus('Provjera…', null);
+  const okPerm = await ensureHostPermission(url);
+  if (!okPerm) { setSyncStatus('Permisija odbijena za taj URL', 'error'); return; }
+  try {
+    const ping = await pingServer({ serverUrl: url, token });
+    if (!ping.ok) { setSyncStatus(`Server nije OK (status ${ping.status || 'n/a'})`, 'error'); return; }
+    const auth = await checkAuth({ serverUrl: url, token });
+    if (!auth.ok) { setSyncStatus(`Token nije OK (status ${auth.status})`, 'error'); return; }
+    setSyncStatus('Server i token OK', 'ok');
+  } catch (err) {
+    setSyncStatus(`Greška: ${err.message || err}`, 'error');
+  }
+}
+
+async function handleSettingsSave() {
+  const url = $('#settings-url').value.trim();
+  const token = $('#settings-token').value;
+  if (!url || !token) { setSyncStatus('Unesi URL i token', 'error'); return; }
+  const okPerm = await ensureHostPermission(url);
+  if (!okPerm) { setSyncStatus('Permisija odbijena za taj URL', 'error'); return; }
+  const existing = (await getSyncConfig(state.db)) || {};
+  await setSyncConfig(state.db, {
+    ...existing,
+    serverUrl: url.replace(/\/+$/, ''),
+    token
+  });
+  setSyncStatus('Spremljeno', 'ok');
+}
+
+async function handleSettingsSyncNow() {
+  setSyncStatus('Sinkroniziram…', null);
+  try {
+    const res = await runSync(state.db);
+    if (!res.ok) { setSyncStatus(`Ne mogu: ${res.reason}`, 'error'); return; }
+    setSyncStatus(`Sinkronizirano · ${res.pulled} preuzeto, ${res.pushed} poslano${res.rejected ? `, ${res.rejected} odbijeno` : ''}`, 'ok');
+    if (state.view === 'launcher') await renderLauncher();
+    else if (state.view === 'list') await renderList();
+  } catch (err) {
+    setSyncStatus(`Greška: ${err.message || err}`, 'error');
+  }
+}
+
 async function init() {
   state.db = await openDb();
   injectIcons();
@@ -97,6 +226,7 @@ async function init() {
   bindAttachAddHandler();
   await renderLauncher();
   setView('launcher');
+  syncOnStartup();
 }
 
 async function handleNewNote() {
@@ -109,6 +239,13 @@ function bindStaticEvents() {
   $('#search').addEventListener('input', onSearchInput);
   $('#btn-back').addEventListener('click', () => { showList().catch(err => console.error('[notes]', err)); });
   $('#btn-delete').addEventListener('click', () => { onDeleteNoteClick().catch(err => console.error('[notes]', err)); });
+
+  $('#btn-settings').addEventListener('click', () => { openSettingsModal().catch(err => console.error('[notes] settings', err)); });
+  $('#settings-close').addEventListener('click', closeSettingsModal);
+  $('#settings-test').addEventListener('click', () => handleSettingsTest().catch(err => console.error('[notes] test', err)));
+  $('#settings-save').addEventListener('click', () => handleSettingsSave().catch(err => console.error('[notes] save-settings', err)));
+  $('#settings-sync-now').addEventListener('click', () => handleSettingsSyncNow().catch(err => console.error('[notes] sync-now', err)));
+  $('#modal-settings').addEventListener('click', (e) => { if (e.target.id === 'modal-settings') closeSettingsModal(); });
 
   $('#hero-new').addEventListener('click', () => handleNewNote().catch(err => console.error('[notes] hero-new', err)));
 
@@ -344,6 +481,7 @@ async function flushBody() {
   try {
     await updateNote(state.db, state.currentNoteId, { body: $('#editor-body').value });
     pulseSaved();
+    scheduleSync();
   } catch (err) {
     console.error('[notes] flushBody', err);
     state.saveState = 'error';
@@ -358,6 +496,7 @@ async function flushAndPrune() {
   const note = await getNote(state.db, state.currentNoteId);
   if (note && !note.body.trim() && note.attachmentIds.length === 0) {
     await deleteNote(state.db, state.currentNoteId);
+    scheduleSync();
   }
 }
 
@@ -437,6 +576,7 @@ async function removeAttachmentClick(attId) {
   releaseObjectUrl(attId);
   const note = await getNote(state.db, state.currentNoteId);
   if (note) renderAttachments(note);
+  scheduleSync();
 }
 
 function releaseObjectUrl(attId) {
@@ -485,6 +625,7 @@ function bindAttachAddHandler() {
     }
     const note = await getNote(state.db, state.currentNoteId);
     if (note) renderAttachments(note);
+    scheduleSync();
   });
 }
 
@@ -505,6 +646,7 @@ async function onPaste(e) {
     if (state.currentNoteId !== noteId) return;
     const note = await getNote(state.db, noteId);
     if (note) renderAttachments(note);
+    scheduleSync();
   } catch (err) {
     console.error('[notes] addAttachment failed', err);
     if (err.name === 'QuotaExceededError') {
@@ -536,6 +678,7 @@ async function onDeleteNoteClick() {
   state.currentNoteId = null;
   setView('list');
   await renderList();
+  scheduleSync();
 }
 
 async function showList() {

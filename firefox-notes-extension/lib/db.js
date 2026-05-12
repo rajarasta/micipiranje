@@ -1,5 +1,5 @@
 export const DB_NAME = 'firefox-notes-db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export function openDb() {
   return new Promise((resolve, reject) => {
@@ -14,6 +14,9 @@ export function openDb() {
       }
       if (!db.objectStoreNames.contains('attachments')) {
         db.createObjectStore('attachments', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('config')) {
+        db.createObjectStore('config', { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);

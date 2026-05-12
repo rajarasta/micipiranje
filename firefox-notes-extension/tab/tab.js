@@ -1,4 +1,5 @@
 import { openDb } from '../lib/db.js';
+import { getSyncConfig, runSync, isConfigured } from '../lib/sync.js';
 import {
   listNotes, getNote, createNote, updateNote, deleteNote,
   togglePin, setTags, addAttachment, removeAttachment, getAttachment
@@ -304,6 +305,7 @@ async function flushBody() {
     state.saveState = 'saved';
     state.lastSavedAt = updated.updatedAt;
     renderFootSave();
+    scheduleSync();
     // Update sidebar preview without full re-fetch:
     const idx = state.notes.findIndex(n => n.id === state.activeNoteId);
     if (idx >= 0) {
@@ -377,6 +379,7 @@ async function renderRight() {
       await refreshNotes();
       renderRight();
       renderSidebar();
+      scheduleSync();
     });
     tagsBox.appendChild(pill);
   }
@@ -392,6 +395,7 @@ async function renderRight() {
     await refreshNotes();
     renderRight();
     renderSidebar();
+    scheduleSync();
   });
   tagsBox.appendChild(addTag);
 }
@@ -647,6 +651,7 @@ function triggerFilePicker() {
     await renderEditor();
     await renderRight();
     renderSidebar();
+    scheduleSync();
   });
   inp.click();
 }
@@ -710,6 +715,7 @@ function bindEvents() {
     await refreshNotes();
     renderRight();
     renderSidebar();
+    scheduleSync();
   });
 
   $('#toggle-pin').addEventListener('click', () => $('#act-pin').click());
@@ -723,6 +729,7 @@ function bindEvents() {
     renderEditor();
     renderRight();
     renderSidebar();
+    scheduleSync();
   });
 
   $('#act-export').addEventListener('click', () => openExportModal().catch(err => console.error('[notes] export', err)));
@@ -748,6 +755,7 @@ async function createAndOpen() {
   await refreshNotes();
   await openNote(note.id);
   renderSidebar();
+  scheduleSync();
 }
 
 async function openNote(id) {
@@ -759,6 +767,38 @@ async function openNote(id) {
   await renderRight();
 }
 
+const SYNC_DEBOUNCE_MS = 2000;
+let syncDebounceTimer = null;
+
+function scheduleSync() {
+  if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(async () => {
+    syncDebounceTimer = null;
+    try {
+      const res = await runSync(state.db);
+      if (res && res.ok && (res.pulled > 0 || res.pushed > 0)) {
+        await refreshNotes();
+        renderSidebar();
+        renderRight();
+      }
+    } catch (err) { console.warn('[sync] tab background sync failed', err); }
+  }, SYNC_DEBOUNCE_MS);
+}
+
+async function syncOnStartup() {
+  try {
+    const cfg = await getSyncConfig(state.db);
+    if (!isConfigured(cfg)) return;
+    const res = await runSync(state.db);
+    if (res && res.ok && (res.pulled > 0)) {
+      await refreshNotes();
+      renderSidebar();
+      renderEditor();
+      renderRight();
+    }
+  } catch (err) { console.warn('[sync] tab startup sync failed', err); }
+}
+
 async function init() {
   state.db = await openDb();
   injectIcons();
@@ -768,6 +808,7 @@ async function init() {
   renderRight();
   bindEvents();
   startFooterTicker();
+  syncOnStartup();
 }
 
 init().catch(err => {
